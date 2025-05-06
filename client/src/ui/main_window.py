@@ -4,7 +4,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QImage, QPixmap
 import cv2
 import numpy as np
-from network.client import RobotClient
+from src.network.client import RobotClient
 
 class MainWindow(QMainWindow):
     def __init__(self):

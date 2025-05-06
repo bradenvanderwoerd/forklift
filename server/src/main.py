@@ -1,6 +1,7 @@
 import signal
 import sys
 import time
+import threading
 from typing import Dict, Any
 
 from controllers.motor import MotorController
@@ -11,6 +12,9 @@ from network.tcp_server import CommandServer
 class ForkliftServer:
     def __init__(self):
         """Initialize server components"""
+        self.running = True
+        self.cleanup_lock = threading.Lock()
+        
         # Initialize hardware controllers
         self.motor_controller = MotorController()
         self.servo_controller = ServoController()
@@ -67,7 +71,8 @@ class ForkliftServer:
             signum: Signal number
             frame: Current stack frame
         """
-        print("\nShutting down...")
+        print("\nShutdown signal received...")
+        self.running = False
         self.cleanup()
         sys.exit(0)
     
@@ -75,36 +80,69 @@ class ForkliftServer:
         """Start server components"""
         print("Starting server...")
         
-        # Start video streaming
-        self.video_streamer.start()
-        print("Video streaming started")
-        
-        # Start command server
-        self.command_server.start()
-        print("Command server started")
-        
-        # Main loop
         try:
-            while True:
-                time.sleep(1)
+            # Start video streaming
+            self.video_streamer.start()
+            print("Video streaming started")
+            
+            # Start command server
+            self.command_server.start()
+            print("Command server started")
+            
+            # Main loop
+            while self.running:
+                time.sleep(0.1)  # Reduced sleep time for more responsive shutdown
+                
         except KeyboardInterrupt:
+            print("\nKeyboard interrupt received...")
+            self.running = False
+        finally:
             self.cleanup()
     
     def cleanup(self):
         """Clean up resources"""
-        print("Cleaning up...")
-        
-        # Stop components
-        self.video_streamer.stop()
-        self.command_server.stop()
-        
-        # Clean up resources
-        self.video_streamer.cleanup()
-        self.command_server.cleanup()
-        self.motor_controller.cleanup()
-        self.servo_controller.cleanup()
-        
-        print("Cleanup complete")
+        with self.cleanup_lock:  # Prevent multiple cleanup calls
+            print("Cleaning up...")
+            
+            # Stop components
+            try:
+                self.video_streamer.stop()
+                print("Video streamer stopped")
+            except Exception as e:
+                print(f"Error stopping video streamer: {e}")
+                
+            try:
+                self.command_server.stop()
+                print("Command server stopped")
+            except Exception as e:
+                print(f"Error stopping command server: {e}")
+            
+            # Clean up resources
+            try:
+                self.video_streamer.cleanup()
+                print("Video streamer cleaned up")
+            except Exception as e:
+                print(f"Error cleaning up video streamer: {e}")
+                
+            try:
+                self.command_server.cleanup()
+                print("Command server cleaned up")
+            except Exception as e:
+                print(f"Error cleaning up command server: {e}")
+                
+            try:
+                self.motor_controller.cleanup()
+                print("Motor controller cleaned up")
+            except Exception as e:
+                print(f"Error cleaning up motor controller: {e}")
+                
+            try:
+                self.servo_controller.cleanup()
+                print("Servo controller cleaned up")
+            except Exception as e:
+                print(f"Error cleaning up servo controller: {e}")
+            
+            print("Cleanup complete")
 
 if __name__ == '__main__':
     server = ForkliftServer()
