@@ -8,6 +8,10 @@ import signal
 from websockets.server import serve as ws_serve
 from websockets.exceptions import ConnectionClosed
 import io
+import time
+from picamera2 import Picamera2
+from picamera2.encoders import JpegEncoder
+from picamera2.outputs import FileOutput
 
 logger = logging.getLogger(__name__)
 
@@ -75,46 +79,58 @@ class VideoStreamer:
         self._stop_event = None
         self.camera = None
         self.loop = None
+        self.quality_controller = AdaptiveQualityController()
         
     def _initialize_camera(self):
         """Initialize the camera"""
         try:
-            # Initialize the camera using OpenCV
-            self.camera = cv2.VideoCapture(0)
-            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            # Initialize the camera using picamera2
+            self.camera = Picamera2()
             
-            if not self.camera.isOpened():
-                raise RuntimeError("Failed to open camera")
+            # Configure the camera
+            config = self.camera.create_video_configuration(
+                main={"size": (640, 480), "format": "RGB888"},
+                lores={"size": (640, 480), "format": "YUV420"}
+            )
+            self.camera.configure(config)
+            
+            # Start the camera
+            self.camera.start()
+            
+            # Verify camera is working
+            if not self.camera.is_running:
+                raise RuntimeError("Failed to start camera")
                 
             logger.info("Camera initialized successfully")
+            logger.info(f"Camera configuration: {config}")
+            
         except Exception as e:
             logger.error(f"Error initializing camera: {e}")
+            if self.camera:
+                self.camera.stop()
+                self.camera = None
             raise
             
     async def _handle_client(self, websocket, path):
-        """Handle a client connection
-        
-        Args:
-            websocket: WebSocket connection
-            path: Request path
-        """
+        """Handle a client connection"""
         self.clients.add(websocket)
         logger.info(f"New video client connected. Total clients: {len(self.clients)}")
         
         try:
             while self.running:
                 if not self.camera:
+                    logger.error("Camera not initialized")
                     break
                     
                 # Capture frame
-                ret, frame = self.camera.read()
-                if not ret:
+                frame = self.camera.capture_array()
+                if frame is None:
                     logger.error("Failed to capture frame")
-                    break
+                    continue
                 
-                # Convert to JPEG
-                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                # Convert to JPEG with adaptive quality
+                quality = self.quality_controller.get_quality()
+                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
                 await websocket.send(buffer.tobytes())
                 
                 # Control frame rate
@@ -189,7 +205,7 @@ class VideoStreamer:
         
         # Release camera
         if self.camera:
-            self.camera.release()
+            self.camera.stop()
             self.camera = None
             logger.info("Camera released")
         
