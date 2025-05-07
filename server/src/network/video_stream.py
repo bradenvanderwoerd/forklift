@@ -97,13 +97,14 @@ class VideoStreamer:
             # Start the camera
             self.camera.start()
             
-            # Verify camera is working
-            if not self.camera.is_running:
-                raise RuntimeError("Failed to start camera")
+            # Verify camera is working by attempting to capture a frame
+            try:
+                self.camera.capture_array()
+                logger.info("Camera initialized successfully")
+                logger.info(f"Camera configuration: {config}")
+            except Exception as e:
+                raise RuntimeError(f"Failed to start camera: {e}")
                 
-            logger.info("Camera initialized successfully")
-            logger.info(f"Camera configuration: {config}")
-            
         except Exception as e:
             logger.error(f"Error initializing camera: {e}")
             if self.camera:
