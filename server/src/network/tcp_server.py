@@ -97,7 +97,8 @@ class CommandServer:
         self.clients = set()
         self.handlers = {}
         self.running = False
-        self._stop_event = asyncio.Event()
+        self._stop_event = None
+        self.loop = None
         
     def register_handler(self, command: str, handler: Callable):
         """Register a handler for a specific command
@@ -156,6 +157,7 @@ class CommandServer:
         """Start the server in a new event loop"""
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
+        self._stop_event = asyncio.Event()
         self.loop.run_until_complete(self.start_server())
         
     def stop(self):
@@ -168,17 +170,17 @@ class CommandServer:
         
         # Set stop event
         if self.loop and self._stop_event:
-            asyncio.run_coroutine_threadsafe(self._stop_event.set(), self.loop)
+            self.loop.call_soon_threadsafe(self._stop_event.set)
         
         # Close all client connections
         for client in self.clients:
-            asyncio.run_coroutine_threadsafe(client.close(), self.loop)
+            self.loop.call_soon_threadsafe(client.close)
         self.clients.clear()
         
         # Stop the server
         if self.server:
             self.server.close()
-            asyncio.run_coroutine_threadsafe(self.server.wait_closed(), self.loop)
+            self.loop.call_soon_threadsafe(self.server.wait_closed)
             
         # Stop the event loop
         if self.loop:

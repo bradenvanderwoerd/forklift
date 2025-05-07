@@ -70,8 +70,9 @@ class VideoStreamer:
         self.server = None
         self.clients = set()
         self.running = False
-        self._stop_event = asyncio.Event()
+        self._stop_event = None
         self.camera = None
+        self.loop = None
         
     def _initialize_camera(self):
         """Initialize the camera"""
@@ -143,6 +144,7 @@ class VideoStreamer:
             self._initialize_camera()
             self.loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.loop)
+            self._stop_event = asyncio.Event()
             self.loop.run_until_complete(self.start_server())
         except Exception as e:
             logger.error(f"Error starting video streamer: {e}")
@@ -159,17 +161,17 @@ class VideoStreamer:
         
         # Set stop event
         if self.loop and self._stop_event:
-            asyncio.run_coroutine_threadsafe(self._stop_event.set(), self.loop)
+            self.loop.call_soon_threadsafe(self._stop_event.set)
         
         # Close all client connections
         for client in self.clients:
-            asyncio.run_coroutine_threadsafe(client.close(), self.loop)
+            self.loop.call_soon_threadsafe(client.close)
         self.clients.clear()
         
         # Stop the server
         if self.server:
             self.server.close()
-            asyncio.run_coroutine_threadsafe(self.server.wait_closed(), self.loop)
+            self.loop.call_soon_threadsafe(self.server.wait_closed)
             
         # Stop the event loop
         if self.loop:
