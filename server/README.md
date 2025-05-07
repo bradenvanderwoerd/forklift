@@ -46,6 +46,17 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+4. Create symbolic links for system packages:
+```bash
+# Create site-packages directory if it doesn't exist
+mkdir -p venv/lib/python3.9/site-packages
+
+# Create symbolic links for system packages
+ln -s /usr/lib/python3/dist-packages/picamera2 venv/lib/python3.9/site-packages/
+ln -s /usr/lib/python3/dist-packages/RPi venv/lib/python3.9/site-packages/
+ln -s /usr/lib/python3/dist-packages/libcamera venv/lib/python3.9/site-packages/
+```
+
 ## Usage
 
 1. Create a `.env` file in the server directory with your configuration:
@@ -98,6 +109,21 @@ vcgencmd get_camera
 2. Test camera with:
 ```bash
 libcamera-hello
+```
+
+3. If picamera2 module is not found in virtual environment:
+```bash
+# Verify system packages are installed
+dpkg -l | grep python3-picamera2
+dpkg -l | grep python3-libcamera
+
+# Check if symbolic links exist
+ls -l venv/lib/python3.9/site-packages/picamera2
+ls -l venv/lib/python3.9/site-packages/libcamera
+
+# If links are broken or missing, recreate them
+ln -sf /usr/lib/python3/dist-packages/picamera2 venv/lib/python3.9/site-packages/
+ln -sf /usr/lib/python3/dist-packages/libcamera venv/lib/python3.9/site-packages/
 ```
 
 ### GPIO Issues
