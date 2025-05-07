@@ -5,6 +5,7 @@ import threading
 import socket
 from typing import Dict, Any
 import logging
+import asyncio
 
 from controllers.motor import MotorController
 from controllers.servo import ServoController
@@ -57,6 +58,10 @@ class ForkliftServer:
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._handle_shutdown)
         signal.signal(signal.SIGTERM, self._handle_shutdown)
+        
+        # Create threads for servers
+        self.video_thread = threading.Thread(target=self._run_video_server)
+        self.command_thread = threading.Thread(target=self._run_command_server)
     
     def _register_handlers(self):
         """Register command handlers"""
@@ -92,6 +97,22 @@ class ForkliftServer:
         self.motor_controller.stop()
         self.servo_controller.set_position(0)
     
+    def _run_video_server(self):
+        """Run video server in a separate thread"""
+        try:
+            self.video_streamer.start()
+        except Exception as e:
+            logger.error(f"Error in video server thread: {e}")
+            self.running = False
+    
+    def _run_command_server(self):
+        """Run command server in a separate thread"""
+        try:
+            self.command_server.start()
+        except Exception as e:
+            logger.error(f"Error in command server thread: {e}")
+            self.running = False
+    
     def _handle_shutdown(self, signum, frame):
         """Handle shutdown signal
         
@@ -114,13 +135,9 @@ class ForkliftServer:
         logger.info(f"Video server will listen on {HOST}:{VIDEO_PORT}")
         
         try:
-            # Start video streaming
-            self.video_streamer.start()
-            logger.info("Video streaming started")
-            
-            # Start command server
-            self.command_server.start()
-            logger.info("Command server started")
+            # Start servers in separate threads
+            self.video_thread.start()
+            self.command_thread.start()
             
             # Main loop
             while self.running:
