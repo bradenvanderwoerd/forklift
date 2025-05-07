@@ -2,18 +2,46 @@ import signal
 import sys
 import time
 import threading
+import socket
 from typing import Dict, Any
+import logging
 
 from controllers.motor import MotorController
 from controllers.servo import ServoController
 from network.video_stream import VideoStreamer
 from network.tcp_server import CommandServer
+from config import HOST, COMMAND_PORT, VIDEO_PORT
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+def check_port_availability(port: int) -> bool:
+    """Check if a port is available for use."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind((HOST, port))
+            return True
+        except socket.error:
+            return False
 
 class ForkliftServer:
     def __init__(self):
         """Initialize server components"""
         self.running = True
         self.cleanup_lock = threading.Lock()
+        self.cleanup_complete = threading.Event()
+        
+        # Check port availability
+        if not check_port_availability(COMMAND_PORT):
+            logger.error(f"Command port {COMMAND_PORT} is already in use!")
+            sys.exit(1)
+        if not check_port_availability(VIDEO_PORT):
+            logger.error(f"Video port {VIDEO_PORT} is already in use!")
+            sys.exit(1)
         
         # Initialize hardware controllers
         self.motor_controller = MotorController()
@@ -71,78 +99,91 @@ class ForkliftServer:
             signum: Signal number
             frame: Current stack frame
         """
-        print("\nShutdown signal received...")
+        logger.info(f"\nShutdown signal {signum} received...")
         self.running = False
         self.cleanup()
+        # Wait for cleanup to complete
+        if not self.cleanup_complete.wait(timeout=5.0):
+            logger.warning("Cleanup did not complete in time")
         sys.exit(0)
     
     def start(self):
         """Start server components"""
-        print("Starting server...")
+        logger.info("Starting server...")
+        logger.info(f"Command server will listen on {HOST}:{COMMAND_PORT}")
+        logger.info(f"Video server will listen on {HOST}:{VIDEO_PORT}")
         
         try:
             # Start video streaming
             self.video_streamer.start()
-            print("Video streaming started")
+            logger.info("Video streaming started")
             
             # Start command server
             self.command_server.start()
-            print("Command server started")
+            logger.info("Command server started")
             
             # Main loop
             while self.running:
                 time.sleep(0.1)  # Reduced sleep time for more responsive shutdown
                 
         except KeyboardInterrupt:
-            print("\nKeyboard interrupt received...")
+            logger.info("\nKeyboard interrupt received...")
             self.running = False
         finally:
             self.cleanup()
     
     def cleanup(self):
         """Clean up resources"""
-        with self.cleanup_lock:  # Prevent multiple cleanup calls
-            print("Cleaning up...")
+        if not self.cleanup_lock.acquire(blocking=False):
+            logger.warning("Cleanup already in progress")
+            return
+            
+        try:
+            logger.info("Cleaning up...")
             
             # Stop components
             try:
                 self.video_streamer.stop()
-                print("Video streamer stopped")
+                logger.info("Video streamer stopped")
             except Exception as e:
-                print(f"Error stopping video streamer: {e}")
+                logger.error(f"Error stopping video streamer: {e}")
                 
             try:
                 self.command_server.stop()
-                print("Command server stopped")
+                logger.info("Command server stopped")
             except Exception as e:
-                print(f"Error stopping command server: {e}")
+                logger.error(f"Error stopping command server: {e}")
             
             # Clean up resources
             try:
                 self.video_streamer.cleanup()
-                print("Video streamer cleaned up")
+                logger.info("Video streamer cleaned up")
             except Exception as e:
-                print(f"Error cleaning up video streamer: {e}")
+                logger.error(f"Error cleaning up video streamer: {e}")
                 
             try:
                 self.command_server.cleanup()
-                print("Command server cleaned up")
+                logger.info("Command server cleaned up")
             except Exception as e:
-                print(f"Error cleaning up command server: {e}")
+                logger.error(f"Error cleaning up command server: {e}")
                 
             try:
                 self.motor_controller.cleanup()
-                print("Motor controller cleaned up")
+                logger.info("Motor controller cleaned up")
             except Exception as e:
-                print(f"Error cleaning up motor controller: {e}")
+                logger.error(f"Error cleaning up motor controller: {e}")
                 
             try:
                 self.servo_controller.cleanup()
-                print("Servo controller cleaned up")
+                logger.info("Servo controller cleaned up")
             except Exception as e:
-                print(f"Error cleaning up servo controller: {e}")
+                logger.error(f"Error cleaning up servo controller: {e}")
             
-            print("Cleanup complete")
+            logger.info("Cleanup complete")
+            
+        finally:
+            self.cleanup_complete.set()
+            self.cleanup_lock.release()
 
 if __name__ == '__main__':
     server = ForkliftServer()
