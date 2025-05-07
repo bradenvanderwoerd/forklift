@@ -32,6 +32,9 @@ class RobotClient:
         self.thread = None
         self._stop_event = threading.Event()
         
+        # Log the configuration
+        logger.info(f"Initializing RobotClient with: HOST={self.host}, COMMAND_PORT={self.command_port}, VIDEO_PORT={self.video_port}")
+        
     def connect(self):
         """Start the client connection in a separate thread"""
         if self.is_connected:
