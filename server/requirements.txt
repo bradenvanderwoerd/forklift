@@ -1,6 +1,16 @@
+# Hardware control
 RPi.GPIO==0.7.1
+
+# Camera and image processing
 opencv-python>=4.8.0
 numpy>=1.24.0
-python-dotenv>=1.0.0
+Pillow>=10.0.0
+v4l2-python3>=0.2.0  # Required by picamera2 for video4linux2 support
+
+# Network and async
 websockets>=12.0
-Pillow>=10.0.0 
+python-dotenv>=1.0.0
+asyncio>=3.4.3
+
+# System packages (install via apt)
+# sudo apt install -y python3-picamera2 python3-rpi.gpio python3-libcamera 
