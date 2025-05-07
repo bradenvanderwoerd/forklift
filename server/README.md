@@ -1,134 +1,130 @@
 # Forklift Server
 
-This is the server component of the Forklift project, designed to run on a Raspberry Pi. It handles motor control, servo control, and video streaming.
+This is the server component of the Forklift project, designed to run on a Raspberry Pi. It handles video streaming, motor control, and command processing.
 
 ## Requirements
 
-- Raspberry Pi (4 recommended)
-- Raspberry Pi Camera Module
-- Motor driver board (e.g., L298N)
-- DC motors (2x)
-- Servo motor
-- Python 3.7+
+### System Dependencies
+- Raspberry Pi OS (Bullseye or newer)
+- Python 3.9 or newer
+- Camera interface enabled
+- GPIO access
+
+### System Package Installation
+```bash
+# Update package lists
+sudo apt update
+
+# Install system dependencies
+sudo apt install -y python3-picamera2  # For camera support
+sudo apt install -y python3-rpi.gpio   # For GPIO access
+```
+
+### Python Dependencies
+- RPi.GPIO
+- opencv-python
+- numpy
+- python-dotenv
+- websockets
 
 ## Setup
 
-1. Install system dependencies:
-   ```bash
-   sudo apt-get update
-   sudo apt-get install -y python3-pip python3-venv
-   ```
+1. Enable the camera interface:
+```bash
+sudo raspi-config
+# Navigate to Interface Options -> Camera and enable it
+```
 
-2. Create and activate virtual environment:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
+2. Create and activate a virtual environment:
+```bash
+python -m venv venv
+source venv/bin/activate
+```
 
 3. Install Python dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Enable camera interface:
-   ```bash
-   sudo raspi-config
-   # Navigate to Interface Options > Camera and enable it
-   ```
-
-5. Enable I2C interface (if using I2C devices):
-   ```bash
-   sudo raspi-config
-   # Navigate to Interface Options > I2C and enable it
-   ```
+```bash
+pip install -r requirements.txt
+```
 
 ## Usage
 
-1. Start the server:
-   ```bash
-   python src/main.py
-   ```
+1. Create a `.env` file in the server directory with your configuration:
+```env
+HOST=0.0.0.0
+COMMAND_PORT=3456
+VIDEO_PORT=3457
+```
 
-2. The server will:
-   - Start video streaming on UDP port 5001
-   - Start command server on TCP port 4001
-   - Initialize motor and servo controllers
-
-3. To stop the server, press Ctrl+C. The server will clean up resources properly.
+2. Start the server:
+```bash
+python src/main.py
+```
 
 ## Hardware Connections
 
 ### Motor Control
-- Left Motor
-  - Forward: GPIO 5
-  - Backward: GPIO 6
-  - PWM: GPIO 17
-- Right Motor
-  - Forward: GPIO 22
-  - Backward: GPIO 23
-  - PWM: GPIO 24
+- GPIO pins for motor control (to be documented)
 
 ### Servo Control
-- PWM: GPIO 25
+- GPIO pins for servo control (to be documented)
+
+### Camera
+- Raspberry Pi Camera Module connected to the camera port
 
 ## Network Protocol
 
-### Command Server (TCP:4001)
-Commands are sent as JSON objects:
-```json
-{
-    "type": "motor",
-    "data": {
-        "speed": 50
-    }
-}
-```
+### Command Server (WebSocket)
+- Port: 3456 (configurable)
+- Protocol: WebSocket
+- Commands:
+  - motor: Control motor speed
+  - servo: Control servo position
+  - emergency_stop: Stop all movement
 
-Available commands:
-- `motor`: Control motor speed (-100 to 100)
-- `servo`: Control servo position (0-45 degrees)
-- `emergency_stop`: Stop all motors and reset servo
-
-### Video Stream (UDP:5001)
-- Resolution: 640x480
-- Frame rate: ~30 FPS
-- JPEG compression with adaptive quality
-- Frame sequence tracking
+### Video Stream (WebSocket)
+- Port: 3457 (configurable)
+- Protocol: WebSocket
+- Format: JPEG frames at 30 FPS
 
 ## Troubleshooting
 
-1. **Camera Issues**
-   - Check camera permissions
-   - Verify camera index
-   - Test camera in isolation
+### Camera Issues
+1. Verify camera is enabled:
+```bash
+vcgencmd get_camera
+# Should show supported=1 detected=1
+```
 
-2. **Motor Control Issues**
-   - Verify GPIO connections
-   - Check power supply
-   - Test motor driver
+2. Test camera with:
+```bash
+libcamera-hello
+```
 
-3. **Network Issues**
-   - Check firewall settings
-   - Verify port availability
-   - Test network connectivity
+### GPIO Issues
+1. Verify GPIO access:
+```bash
+groups
+# Should include 'gpio' group
+```
+
+2. If not in gpio group:
+```bash
+sudo usermod -a -G gpio $USER
+# Log out and back in for changes to take effect
+```
 
 ## Development
 
-1. Create a feature branch:
-   ```bash
-   git checkout -b feature/your-feature
-   ```
+### Code Structure
+- `src/`: Main source code
+  - `network/`: Network communication components
+  - `controllers/`: Hardware control components
+  - `config.py`: Configuration management
 
-2. Make changes and test:
-   ```bash
-   python src/main.py
-   ```
-
-3. Run tests:
-   ```bash
-   pytest tests/
-   ```
-
+### Adding New Features
+1. Create a new branch
+2. Implement changes
+3. Test thoroughly
 4. Submit pull request
 
 ## License
