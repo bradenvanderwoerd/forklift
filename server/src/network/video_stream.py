@@ -1,10 +1,13 @@
 import cv2
 import numpy as np
-import socket
-import struct
-import time
-from typing import Tuple, Optional
-from threading import Thread, Event
+import asyncio
+import websockets
+import logging
+import threading
+from typing import Optional
+import signal
+
+logger = logging.getLogger(__name__)
 
 class AdaptiveQualityController:
     def __init__(self, initial_quality: int = 80):
@@ -61,106 +64,131 @@ class FrameSequencer:
         return self.sequence
 
 class VideoStreamer:
-    def __init__(self, host: str = '0.0.0.0', port: int = 5001):
-        """Initialize video streamer
-        
-        Args:
-            host: Host address to bind to
-            port: UDP port for video streaming
-        """
+    def __init__(self, host: str = "0.0.0.0", port: int = 3457):
         self.host = host
         self.port = port
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.bind((host, port))
+        self.server = None
+        self.clients = set()
+        self.running = False
+        self._stop_event = asyncio.Event()
+        self.camera = None
         
-        self.quality_controller = AdaptiveQualityController()
-        self.frame_sequencer = FrameSequencer()
-        self.running = Event()
-        self.stream_thread: Optional[Thread] = None
+    def _initialize_camera(self):
+        """Initialize the camera"""
+        try:
+            self.camera = cv2.VideoCapture(0)
+            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            self.camera.set(cv2.CAP_PROP_FPS, 30)
+            if not self.camera.isOpened():
+                raise RuntimeError("Failed to open camera")
+            logger.info("Camera initialized successfully")
+        except Exception as e:
+            logger.error(f"Error initializing camera: {e}")
+            raise
+            
+    async def _handle_client(self, websocket, path):
+        """Handle a client connection
         
-        # Camera setup
-        self.camera = cv2.VideoCapture(0)
-        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        self.camera.set(cv2.CAP_PROP_FPS, 30)
-    
+        Args:
+            websocket: WebSocket connection
+            path: Request path
+        """
+        self.clients.add(websocket)
+        logger.info(f"New video client connected. Total clients: {len(self.clients)}")
+        
+        try:
+            while self.running:
+                if not self.camera or not self.camera.isOpened():
+                    break
+                    
+                ret, frame = self.camera.read()
+                if not ret:
+                    logger.error("Failed to read frame from camera")
+                    break
+                    
+                # Encode frame as JPEG
+                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                await websocket.send(buffer.tobytes())
+                
+                # Control frame rate
+                await asyncio.sleep(1/30)  # ~30 FPS
+                
+        except websockets.exceptions.ConnectionClosed:
+            logger.info("Video client connection closed")
+        except Exception as e:
+            logger.error(f"Error in video stream: {e}")
+        finally:
+            self.clients.remove(websocket)
+            logger.info(f"Video client disconnected. Remaining clients: {len(self.clients)}")
+            
+    async def start_server(self):
+        """Start the WebSocket server"""
+        self.server = await websockets.serve(
+            self._handle_client,
+            self.host,
+            self.port,
+            ping_interval=20,
+            ping_timeout=20
+        )
+        self.running = True
+        logger.info(f"Video server started on {self.host}:{self.port}")
+        
+        # Wait for stop event
+        await self._stop_event.wait()
+        
     def start(self):
-        """Start video streaming"""
-        if self.stream_thread is not None:
-            return
-        
-        self.running.set()
-        self.stream_thread = Thread(target=self._stream_loop)
-        self.stream_thread.start()
-    
+        """Start the video streamer"""
+        try:
+            self._initialize_camera()
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+            self.loop.run_until_complete(self.start_server())
+        except Exception as e:
+            logger.error(f"Error starting video streamer: {e}")
+            self.cleanup()
+            raise
+            
     def stop(self):
-        """Stop video streaming"""
-        self.running.clear()
-        if self.stream_thread is not None:
-            self.stream_thread.join()
-            self.stream_thread = None
-    
-    def _stream_loop(self):
-        """Main streaming loop"""
-        while self.running.is_set():
-            start_time = time.time()
+        """Stop the video streamer"""
+        if not self.running:
+            return
             
-            # Capture frame
-            ret, frame = self.camera.read()
-            if not ret:
-                continue
-            
-            # Process frame
-            frame = self._process_frame(frame)
-            
-            # Get current quality
-            quality = self.quality_controller.get_quality()
-            
-            # Compress frame
-            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-            _, frame_data = cv2.imencode('.jpg', frame, encode_param)
-            
-            # Get sequence number
-            sequence = self.frame_sequencer.next()
-            
-            # Prepare packet
-            packet = self._prepare_packet(sequence, frame_data)
-            
-            # Send packet
-            self.socket.sendto(packet, (self.host, self.port))
-            
-            # Adjust quality based on processing time
-            frame_time = time.time() - start_time
-            self.quality_controller.adjust_quality(frame_time)
-    
-    def _process_frame(self, frame: np.ndarray) -> np.ndarray:
-        """Process video frame
+        logger.info("Stopping video streamer...")
+        self.running = False
         
-        Args:
-            frame: Input frame
-            
-        Returns:
-            Processed frame
-        """
-        # Add any frame processing here (e.g., resizing, filtering)
-        return frame
-    
-    def _prepare_packet(self, sequence: int, frame_data: np.ndarray) -> bytes:
-        """Prepare frame packet for transmission
+        # Set stop event
+        if self.loop and self._stop_event:
+            asyncio.run_coroutine_threadsafe(self._stop_event.set(), self.loop)
         
-        Args:
-            sequence: Frame sequence number
-            frame_data: Compressed frame data
+        # Close all client connections
+        for client in self.clients:
+            asyncio.run_coroutine_threadsafe(client.close(), self.loop)
+        self.clients.clear()
+        
+        # Stop the server
+        if self.server:
+            self.server.close()
+            asyncio.run_coroutine_threadsafe(self.server.wait_closed(), self.loop)
             
-        Returns:
-            Packet data
-        """
-        # Packet format: [sequence(2)][size(4)][data(n)]
-        header = struct.pack('!HI', sequence, len(frame_data))
-        return header + frame_data.tobytes()
-    
+        # Stop the event loop
+        if self.loop:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            
     def cleanup(self):
         """Clean up resources"""
+        logger.info("Cleaning up video streamer...")
         self.stop()
-        self.camera.release()
-        self.socket.close() 
+        
+        # Release camera
+        if self.camera:
+            self.camera.release()
+            self.camera = None
+            logger.info("Camera released")
+        
+        # Wait for the event loop to stop
+        if self.loop and self.loop.is_running():
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            self.loop.close()
+            
+        logger.info("Video streamer cleanup complete") 

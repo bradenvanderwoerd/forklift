@@ -6,6 +6,12 @@ from typing import Dict, Optional, Callable
 from queue import Queue
 from dataclasses import dataclass
 from datetime import datetime
+import asyncio
+import websockets
+import logging
+import signal
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class Command:
@@ -84,129 +90,108 @@ class HeartbeatTimer:
         return (time.time() - self.last_heartbeat) < self.interval * 2
 
 class CommandServer:
-    def __init__(self, host: str = '0.0.0.0', port: int = 4001):
-        """Initialize command server
-        
-        Args:
-            host: Host address to bind to
-            port: TCP port for command server
-        """
+    def __init__(self, host: str = "0.0.0.0", port: int = 3456):
         self.host = host
         self.port = port
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.socket.bind((host, port))
-        
-        self.command_queue = CommandQueue()
-        self.heartbeat_timer = HeartbeatTimer()
+        self.server = None
+        self.clients = set()
+        self.handlers = {}
         self.running = False
-        self.server_thread: Optional[threading.Thread] = None
-        self.command_handlers: Dict[str, Callable] = {}
-    
-    def register_handler(self, command_type: str, handler: Callable):
-        """Register command handler
+        self._stop_event = asyncio.Event()
+        
+    def register_handler(self, command: str, handler: Callable):
+        """Register a handler for a specific command
         
         Args:
-            command_type: Type of command to handle
+            command: Command name
             handler: Handler function
         """
-        self.command_handlers[command_type] = handler
-    
-    def start(self):
-        """Start command server"""
-        if self.server_thread is not None:
-            return
+        self.handlers[command] = handler
         
-        self.running = True
-        self.server_thread = threading.Thread(target=self._server_loop)
-        self.server_thread.start()
-    
-    def stop(self):
-        """Stop command server"""
-        self.running = False
-        if self.server_thread is not None:
-            self.server_thread.join()
-            self.server_thread = None
-    
-    def _server_loop(self):
-        """Main server loop"""
-        self.socket.listen(1)
-        
-        while self.running:
-            try:
-                client_socket, address = self.socket.accept()
-                self._handle_client(client_socket, address)
-            except socket.error:
-                continue
-    
-    def _handle_client(self, client_socket: socket.socket, address: tuple):
-        """Handle client connection
+    async def _handle_client(self, websocket, path):
+        """Handle a client connection
         
         Args:
-            client_socket: Client socket
-            address: Client address
+            websocket: WebSocket connection
+            path: Request path
         """
+        self.clients.add(websocket)
+        logger.info(f"New client connected. Total clients: {len(self.clients)}")
+        
         try:
-            while self.running:
-                # Receive command
-                data = client_socket.recv(1024)
-                if not data:
-                    break
-                
-                # Parse command
+            async for message in websocket:
                 try:
-                    command_data = json.loads(data.decode())
-                    command = Command(
-                        type=command_data['type'],
-                        data=command_data['data']
-                    )
-                except (json.JSONDecodeError, KeyError):
-                    continue
-                
-                # Handle heartbeat
-                if command.type == 'heartbeat':
-                    self.heartbeat_timer.update()
-                    continue
-                
-                # Add command to queue
-                if not self.command_queue.add(command):
-                    # Queue is full, send error response
-                    response = {
-                        'status': 'error',
-                        'message': 'Command queue is full'
-                    }
-                    client_socket.send(json.dumps(response).encode())
-                    continue
-                
-                # Process command
-                self._process_command(command)
-                
-                # Send acknowledgment
-                response = {
-                    'status': 'ok',
-                    'command_id': command.timestamp
-                }
-                client_socket.send(json.dumps(response).encode())
-        
-        except socket.error:
-            pass
+                    data = json.loads(message)
+                    command = data.get('command')
+                    if command in self.handlers:
+                        self.handlers[command](data)
+                    else:
+                        logger.warning(f"Unknown command: {command}")
+                except json.JSONDecodeError:
+                    logger.error("Invalid JSON received")
+                except Exception as e:
+                    logger.error(f"Error handling message: {e}")
+        except websockets.exceptions.ConnectionClosed:
+            logger.info("Client connection closed")
         finally:
-            client_socket.close()
-    
-    def _process_command(self, command: Command):
-        """Process command from queue
+            self.clients.remove(websocket)
+            logger.info(f"Client disconnected. Remaining clients: {len(self.clients)}")
+            
+    async def start_server(self):
+        """Start the WebSocket server"""
+        self.server = await websockets.serve(
+            self._handle_client,
+            self.host,
+            self.port,
+            ping_interval=20,
+            ping_timeout=20
+        )
+        self.running = True
+        logger.info(f"Command server started on {self.host}:{self.port}")
         
-        Args:
-            command: Command to process
-        """
-        handler = self.command_handlers.get(command.type)
-        if handler is not None:
-            try:
-                handler(command.data)
-            except Exception as e:
-                print(f"Error processing command: {e}")
-    
+        # Wait for stop event
+        await self._stop_event.wait()
+        
+    def start(self):
+        """Start the server in a new event loop"""
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_until_complete(self.start_server())
+        
+    def stop(self):
+        """Stop the server"""
+        if not self.running:
+            return
+            
+        logger.info("Stopping command server...")
+        self.running = False
+        
+        # Set stop event
+        if self.loop and self._stop_event:
+            asyncio.run_coroutine_threadsafe(self._stop_event.set(), self.loop)
+        
+        # Close all client connections
+        for client in self.clients:
+            asyncio.run_coroutine_threadsafe(client.close(), self.loop)
+        self.clients.clear()
+        
+        # Stop the server
+        if self.server:
+            self.server.close()
+            asyncio.run_coroutine_threadsafe(self.server.wait_closed(), self.loop)
+            
+        # Stop the event loop
+        if self.loop:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            
     def cleanup(self):
         """Clean up resources"""
+        logger.info("Cleaning up command server...")
         self.stop()
-        self.socket.close() 
+        
+        # Wait for the event loop to stop
+        if self.loop and self.loop.is_running():
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            self.loop.close()
+            
+        logger.info("Command server cleanup complete") 
