@@ -7,9 +7,10 @@ from queue import Queue
 from dataclasses import dataclass
 from datetime import datetime
 import asyncio
-import websockets
 import logging
 import signal
+from websockets.server import serve as ws_serve
+from websockets.exceptions import ConnectionClosed
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +133,7 @@ class CommandServer:
                     logger.error("Invalid JSON received")
                 except Exception as e:
                     logger.error(f"Error handling message: {e}")
-        except websockets.exceptions.ConnectionClosed:
+        except ConnectionClosed:
             logger.info("Client connection closed")
         finally:
             self.clients.remove(websocket)
@@ -140,19 +141,20 @@ class CommandServer:
             
     async def start_server(self):
         """Start the WebSocket server"""
-        self.server = await websockets.serve(
+        async with ws_serve(
             self._handle_client,
             self.host,
             self.port,
             ping_interval=20,
             ping_timeout=20
-        )
-        self.running = True
-        logger.info(f"Command server started on {self.host}:{self.port}")
-        
-        # Wait for stop event
-        await self._stop_event.wait()
-        
+        ) as server:
+            self.server = server
+            self.running = True
+            logger.info(f"Command server started on {self.host}:{self.port}")
+            
+            # Wait for stop event
+            await self._stop_event.wait()
+            
     def start(self):
         """Start the server in a new event loop"""
         self.loop = asyncio.new_event_loop()
@@ -180,10 +182,9 @@ class CommandServer:
         # Stop the server
         if self.server:
             self.server.close()
-            self.loop.call_soon_threadsafe(self.server.wait_closed)
             
         # Stop the event loop
-        if self.loop:
+        if self.loop and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.loop.stop)
             
     def cleanup(self):

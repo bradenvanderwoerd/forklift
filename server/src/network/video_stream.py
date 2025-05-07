@@ -1,11 +1,12 @@
 import cv2
 import numpy as np
 import asyncio
-import websockets
 import logging
 import threading
 from typing import Optional
 import signal
+from websockets.server import serve as ws_serve
+from websockets.exceptions import ConnectionClosed
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ class VideoStreamer:
                 # Control frame rate
                 await asyncio.sleep(1/30)  # ~30 FPS
                 
-        except websockets.exceptions.ConnectionClosed:
+        except ConnectionClosed:
             logger.info("Video client connection closed")
         except Exception as e:
             logger.error(f"Error in video stream: {e}")
@@ -125,19 +126,20 @@ class VideoStreamer:
             
     async def start_server(self):
         """Start the WebSocket server"""
-        self.server = await websockets.serve(
+        async with ws_serve(
             self._handle_client,
             self.host,
             self.port,
             ping_interval=20,
             ping_timeout=20
-        )
-        self.running = True
-        logger.info(f"Video server started on {self.host}:{self.port}")
-        
-        # Wait for stop event
-        await self._stop_event.wait()
-        
+        ) as server:
+            self.server = server
+            self.running = True
+            logger.info(f"Video server started on {self.host}:{self.port}")
+            
+            # Wait for stop event
+            await self._stop_event.wait()
+            
     def start(self):
         """Start the video streamer"""
         try:
@@ -171,10 +173,9 @@ class VideoStreamer:
         # Stop the server
         if self.server:
             self.server.close()
-            self.loop.call_soon_threadsafe(self.server.wait_closed)
             
         # Stop the event loop
-        if self.loop:
+        if self.loop and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.loop.stop)
             
     def cleanup(self):
