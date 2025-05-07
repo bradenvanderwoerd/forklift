@@ -7,6 +7,10 @@ from typing import Optional
 import signal
 from websockets.server import serve as ws_serve
 from websockets.exceptions import ConnectionClosed
+import picamera2
+from picamera2.encoders import JpegEncoder
+from picamera2.outputs import FileOutput
+import io
 
 logger = logging.getLogger(__name__)
 
@@ -78,12 +82,18 @@ class VideoStreamer:
     def _initialize_camera(self):
         """Initialize the camera"""
         try:
-            self.camera = cv2.VideoCapture(0)
-            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            self.camera.set(cv2.CAP_PROP_FPS, 30)
-            if not self.camera.isOpened():
-                raise RuntimeError("Failed to open camera")
+            # Initialize the camera
+            self.camera = picamera2.Picamera2()
+            
+            # Configure the camera
+            config = self.camera.create_video_configuration(
+                main={"size": (640, 480), "format": "RGB888"},
+                lores={"size": (640, 480), "format": "YUV420"}
+            )
+            self.camera.configure(config)
+            
+            # Start the camera
+            self.camera.start()
             logger.info("Camera initialized successfully")
         except Exception as e:
             logger.error(f"Error initializing camera: {e}")
@@ -101,15 +111,13 @@ class VideoStreamer:
         
         try:
             while self.running:
-                if not self.camera or not self.camera.isOpened():
+                if not self.camera:
                     break
                     
-                ret, frame = self.camera.read()
-                if not ret:
-                    logger.error("Failed to read frame from camera")
-                    break
-                    
-                # Encode frame as JPEG
+                # Capture frame
+                frame = self.camera.capture_array()
+                
+                # Convert to JPEG
                 _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 await websocket.send(buffer.tobytes())
                 
@@ -185,7 +193,7 @@ class VideoStreamer:
         
         # Release camera
         if self.camera:
-            self.camera.release()
+            self.camera.stop()
             self.camera = None
             logger.info("Camera released")
         
