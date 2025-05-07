@@ -10,7 +10,6 @@ pidng>=4.0.9  # Required by picamera2 for DNG format support
 simplejpeg>=1.6.6  # Required by picamera2 for JPEG encoding
 pyyaml>=6.0.1  # Required for configuration files
 piexif>=1.1.3  # Required for EXIF data handling
-pykms>=0.1.0  # Required for DRM preview support
 
 # Optional dependencies
 PyQt6>=6.4.0  # For Qt preview (optional)
