@@ -129,6 +129,9 @@ class VideoStreamer:
                     logger.error("Failed to capture frame")
                     continue
                 
+                # Rotate frame 180 degrees
+                frame = cv2.rotate(frame, cv2.ROTATE_180)
+                
                 # Convert to JPEG with adaptive quality
                 quality = self.quality_controller.get_quality()
                 _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])

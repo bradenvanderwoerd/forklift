@@ -10,7 +10,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Forklift Control")
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(1280, 720)
         
         # Initialize robot client
         self.robot_client = RobotClient()
@@ -23,11 +23,13 @@ class MainWindow(QMainWindow):
         # Video display
         self.video_label = QLabel()
         self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.video_label)
+        self.video_label.setMinimumHeight(480)
+        layout.addWidget(self.video_label, stretch=2)
         
         # Control panel
         control_panel = QWidget()
         control_layout = QHBoxLayout(control_panel)
+        layout.addWidget(control_panel, stretch=1)
         
         # Speed control
         speed_layout = QVBoxLayout()
