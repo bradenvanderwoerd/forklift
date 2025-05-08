@@ -6,12 +6,13 @@ import socket
 from typing import Dict, Any
 import logging
 import asyncio
+import RPi.GPIO as GPIO
 
 from controllers.motor import MotorController
 from controllers.servo import ServoController
 from network.video_stream import VideoStreamer
 from network.tcp_server import CommandServer
-from config import HOST, COMMAND_PORT, VIDEO_PORT
+from config import HOST, COMMAND_PORT, VIDEO_PORT, SERVO_PIN
 
 # Set up logging
 logging.basicConfig(
@@ -71,15 +72,7 @@ class ForkliftServer:
         self.command_server.register_handler('emergency_stop', self._handle_emergency_stop)
     
     def _handle_drive_command(self, data: Dict[str, Any]):
-        """
-        Handle drive command from client.
-        Expects: {
-            "type": "DRIVE",
-            "action": "START" or "STOP",
-            "direction": "FORWARD"|"BACKWARD"|"LEFT"|"RIGHT"|"NONE",
-            "speed": int (0-100)
-        }
-        """
+        logger.info(f"Received DRIVE command: {data}")
         direction = data.get("direction", "NONE")
         speed = data.get("speed", 0)
         action = data.get("action", "STOP")
@@ -89,6 +82,14 @@ class ForkliftServer:
             return
 
         if direction == "FORWARD":
+            # TEST: Pulse the servo pin HIGH for 0.5s, then LOW
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(SERVO_PIN, GPIO.OUT)
+            GPIO.output(SERVO_PIN, GPIO.HIGH)
+            logger.info("Pulsing SERVO_PIN HIGH for test")
+            time.sleep(0.5)
+            GPIO.output(SERVO_PIN, GPIO.LOW)
+            logger.info("Pulsing SERVO_PIN LOW for test")
             self.motor_controller.drive_forward(speed)
         elif direction == "BACKWARD":
             self.motor_controller.drive_backward(speed)
@@ -100,20 +101,12 @@ class ForkliftServer:
             self.motor_controller.stop()
     
     def _handle_motor_command(self, data: Dict[str, Any]):
-        """Handle motor control command
-        
-        Args:
-            data: Command data containing speed
-        """
+        logger.info(f"Received MOTOR command: {data}")
         speed = data.get('speed', 0)
         self.motor_controller.set_speed(speed)
     
     def _handle_servo_command(self, data: Dict[str, Any]):
-        """Handle servo control command
-        
-        Args:
-            data: Command data containing position
-        """
+        logger.info(f"Received SERVO command: {data}")
         position = data.get('position')
         if position is not None:
             self.servo_controller.set_position(position)
