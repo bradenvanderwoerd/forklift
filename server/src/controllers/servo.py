@@ -11,7 +11,7 @@ class ServoController:
         self.pin = SERVO_PIN
         self.current_position = 0
         self.target_position = 0
-        self.step_size = 5  # Degrees per step
+        self.step_size = 2  # Changed from 5 to 2 degrees per step
         self.min_angle = 0
         self.max_angle = 45
         

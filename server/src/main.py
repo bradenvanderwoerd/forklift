@@ -75,11 +75,10 @@ class ForkliftServer:
         logger.info("--- _handle_drive_command ENTERED ---")
         logger.info(f"Received DRIVE command data: {data}")
 
-        command_value = data.get("value", {}) # Get the nested 'value' dictionary
+        command_value = data.get("value", {}) 
 
         direction = command_value.get("direction", "NONE")
         speed = command_value.get("speed", 0)
-        # Assuming client sends action within value if it sends it, otherwise default to START for drive
         action = command_value.get("action", "START") 
 
         logger.info(f"Parsed action: {action}, direction: {direction}, speed: {speed}")
@@ -91,11 +90,6 @@ class ForkliftServer:
 
         if direction == "FORWARD":
             logger.info("Executing FORWARD action")
-            GPIO.output(SERVO_PIN, GPIO.HIGH)
-            logger.info("Pulsing SERVO_PIN HIGH for test")
-            time.sleep(0.5)
-            GPIO.output(SERVO_PIN, GPIO.LOW)
-            logger.info("Pulsing SERVO_PIN LOW for test")
             self.motor_controller.drive_forward(speed)
         elif direction == "BACKWARD":
             logger.info("Executing BACKWARD action")
@@ -117,13 +111,28 @@ class ForkliftServer:
     
     def _handle_servo_command(self, data: Dict[str, Any]):
         logger.info(f"Received SERVO command: {data}")
-        position = data.get('position')
-        if position is not None:
-            self.servo_controller.set_position(position)
-        elif data.get('step_up'):
+        
+        command_value = data.get("value", {}) # Get the nested 'value' dictionary
+        position = command_value.get('position')
+        action = command_value.get("action", "SET") # Default to SET if not specified
+
+        logger.info(f"Parsed servo action: {action}, position: {position}")
+
+        if action == "SET" and position is not None:
+            try:
+                angle = float(position) # Ensure position is a number
+                self.servo_controller.set_position(angle)
+                logger.info(f"Servo position set to: {angle}")
+            except ValueError:
+                logger.error(f"Invalid servo position received: {position}. Must be a number.")
+        elif command_value.get('step_up'): # Keep step_up/step_down if client might send them
+            logger.info("Servo stepping up")
             self.servo_controller.step_up()
-        elif data.get('step_down'):
+        elif command_value.get('step_down'):
+            logger.info("Servo stepping down")
             self.servo_controller.step_down()
+        else:
+            logger.warning(f"Unknown servo action or missing position in command: {command_value}")
     
     def _handle_emergency_stop(self, data: Dict[str, Any]):
         """Handle emergency stop command"""

@@ -83,32 +83,40 @@ class MainWindow(QMainWindow):
         speed_layout.addWidget(self.speed_slider)
         control_layout.addLayout(speed_layout)
         
-        # WASD Controls
+        # WASD Controls & Servo Arrows
         wasd_layout = QGridLayout()
         wasd_layout.setSpacing(10)
         
-        # Create key displays
+        # Create key displays for WASD
         self.w_key = KeyDisplay("W")
         self.a_key = KeyDisplay("A")
         self.s_key = KeyDisplay("S")
         self.d_key = KeyDisplay("D")
-        self.space_key = KeyDisplay("SPACE", width=120, height=35)  # Wide space bar
+        self.space_key = KeyDisplay("SPACE", width=120, height=35)
         
-        # Add keys to grid
+        # Create key displays for Servo Up/Down Arrows
+        self.up_arrow_key = KeyDisplay("↑") # Up arrow symbol
+        self.down_arrow_key = KeyDisplay("↓") # Down arrow symbol
+        
+        # Add WASD keys to grid
         wasd_layout.addWidget(self.w_key, 0, 1)
         wasd_layout.addWidget(self.a_key, 1, 0)
         wasd_layout.addWidget(self.s_key, 1, 1)
         wasd_layout.addWidget(self.d_key, 1, 2)
-        wasd_layout.addWidget(self.space_key, 2, 0, 1, 3)
+        wasd_layout.addWidget(self.space_key, 2, 0, 1, 3) # Spans 3 columns
+
+        # Add Servo Up/Down keys to grid (to the right of D key)
+        wasd_layout.addWidget(self.up_arrow_key, 0, 3) # Row 0, Col 3
+        wasd_layout.addWidget(self.down_arrow_key, 1, 3) # Row 1, Col 3
         
-        # Center the WASD grid in a QWidget
-        wasd_widget = QWidget()
-        wasd_widget.setLayout(wasd_layout)
-        wasd_outer_layout = QHBoxLayout()
-        wasd_outer_layout.addStretch(1)
-        wasd_outer_layout.addWidget(wasd_widget)
-        wasd_outer_layout.addStretch(1)
-        control_layout.addLayout(wasd_outer_layout)
+        # Center the WASD & Servo key grid
+        key_grid_widget = QWidget()
+        key_grid_widget.setLayout(wasd_layout)
+        key_grid_outer_layout = QHBoxLayout()
+        key_grid_outer_layout.addStretch(1)
+        key_grid_outer_layout.addWidget(key_grid_widget)
+        key_grid_outer_layout.addStretch(1)
+        control_layout.addLayout(key_grid_outer_layout)
         
         # Control buttons
         button_layout = QVBoxLayout()
@@ -151,6 +159,12 @@ class MainWindow(QMainWindow):
         elif key == Qt.Key.Key_Space:
             self.space_key.set_active(True)
             self.emergency_stop()
+        elif key == Qt.Key.Key_Up:
+            self.up_arrow_key.set_active(True)
+            self.robot_client.send_command("servo", {"step_up": True})
+        elif key == Qt.Key.Key_Down:
+            self.down_arrow_key.set_active(True)
+            self.robot_client.send_command("servo", {"step_down": True})
             
     def keyReleaseEvent(self, event: QKeyEvent):
         key = event.key()
@@ -164,6 +178,10 @@ class MainWindow(QMainWindow):
             self.d_key.set_active(False)
         elif key == Qt.Key.Key_Space:
             self.space_key.set_active(False)
+        elif key == Qt.Key.Key_Up:
+            self.up_arrow_key.set_active(False)
+        elif key == Qt.Key.Key_Down:
+            self.down_arrow_key.set_active(False)
             
     def toggle_connection(self):
         if not self.is_connected:
