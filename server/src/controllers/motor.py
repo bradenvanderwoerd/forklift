@@ -117,7 +117,13 @@ class MotorController:
         self.stop()
         self.pwm1.stop()
         self.pwm2.stop()
-        GPIO.cleanup()
+        # Only clean up the pins used by this controller
+        pins_to_cleanup = [
+            self.MOTOR1_PIN1, self.MOTOR1_PIN2,
+            self.MOTOR2_PIN1, self.MOTOR2_PIN2,
+            self.MOTOR1_PWM, self.MOTOR2_PWM
+        ]
+        GPIO.cleanup(pins_to_cleanup)
 
     def drive_forward(self, speed: float):
         """Drive both motors forward at the given speed (0-100)"""

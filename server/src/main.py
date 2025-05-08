@@ -72,16 +72,22 @@ class ForkliftServer:
         self.command_server.register_handler('emergency_stop', self._handle_emergency_stop)
     
     def _handle_drive_command(self, data: Dict[str, Any]):
-        logger.info(f"Received DRIVE command: {data}")
+        logger.info("--- _handle_drive_command ENTERED ---")
+        logger.info(f"Received DRIVE command data: {data}")
+
         direction = data.get("direction", "NONE")
         speed = data.get("speed", 0)
         action = data.get("action", "STOP")
 
+        logger.info(f"Parsed action: {action}, direction: {direction}, speed: {speed}")
+
         if action == "STOP" or direction == "NONE":
+            logger.info("Executing STOP action or direction is NONE")
             self.motor_controller.stop()
             return
 
         if direction == "FORWARD":
+            logger.info("Executing FORWARD action")
             # TEST: Pulse the servo pin HIGH for 0.5s, then LOW (pin already set up at startup)
             GPIO.output(SERVO_PIN, GPIO.HIGH)
             logger.info("Pulsing SERVO_PIN HIGH for test")
@@ -90,12 +96,16 @@ class ForkliftServer:
             logger.info("Pulsing SERVO_PIN LOW for test")
             self.motor_controller.drive_forward(speed)
         elif direction == "BACKWARD":
+            logger.info("Executing BACKWARD action")
             self.motor_controller.drive_backward(speed)
         elif direction == "LEFT":
+            logger.info("Executing LEFT action")
             self.motor_controller.turn_left(speed)
         elif direction == "RIGHT":
+            logger.info("Executing RIGHT action")
             self.motor_controller.turn_right(speed)
         else:
+            logger.info("Executing ELSE (STOP) action")
             self.motor_controller.stop()
     
     def _handle_motor_command(self, data: Dict[str, Any]):
