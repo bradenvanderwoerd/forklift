@@ -2,6 +2,9 @@ from config import SERVO_PIN
 import RPi.GPIO as GPIO
 import time
 from typing import Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ServoController:
     def __init__(self):
@@ -31,11 +34,12 @@ class ServoController:
         
         # Calculate duty cycle (2.5% to 12.5% for 0-180 degrees)
         # We use a smaller range for our 0-45 degree movement
-        duty_cycle = 2.5 + (angle / 45.0) * 10.0
+        duty_cycle = 2.5 + (angle / 180.0) * 10.0
         
         # Apply position
         self.pwm.ChangeDutyCycle(duty_cycle)
         self.current_position = angle
+        logger.info(f"Servo position set to {self.current_position:.2f} degrees (Duty Cycle: {duty_cycle:.2f}%)")
         
         # Wait for servo to reach position
         time.sleep(0.1)
