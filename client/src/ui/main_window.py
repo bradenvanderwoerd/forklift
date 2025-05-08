@@ -1,10 +1,52 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QPushButton, QLabel, QSlider)
+                             QPushButton, QLabel, QSlider, QGridLayout)
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtGui import QImage, QPixmap, QKeyEvent
 import cv2
 import numpy as np
 from src.network.client import RobotClient
+
+class KeyDisplay(QLabel):
+    def __init__(self, key_text, width=35, height=35):
+        super().__init__(key_text)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setFixedSize(width, height)
+        self.setStyleSheet("""
+            QLabel {
+                background-color: #2c2c2c;
+                color: white;
+                border: 2px solid #3c3c3c;
+                border-radius: 4px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+        """)
+        self.active = False
+        
+    def set_active(self, active):
+        self.active = active
+        if active:
+            self.setStyleSheet("""
+                QLabel {
+                    background-color: #4CAF50;
+                    color: white;
+                    border: 2px solid #45a049;
+                    border-radius: 4px;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QLabel {
+                    background-color: #2c2c2c;
+                    color: white;
+                    border: 2px solid #3c3c3c;
+                    border-radius: 4px;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+            """)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -34,22 +76,39 @@ class MainWindow(QMainWindow):
         # Speed control
         speed_layout = QVBoxLayout()
         self.speed_slider = QSlider(Qt.Orientation.Vertical)
-        self.speed_slider.setRange(-100, 100)
-        self.speed_slider.setValue(0)
+        self.speed_slider.setRange(0, 100)
+        self.speed_slider.setValue(50)  # Start at 50%
         self.speed_slider.valueChanged.connect(self.on_speed_change)
         speed_layout.addWidget(QLabel("Speed"))
         speed_layout.addWidget(self.speed_slider)
         control_layout.addLayout(speed_layout)
         
-        # Steering control
-        steering_layout = QVBoxLayout()
-        self.steering_slider = QSlider(Qt.Orientation.Horizontal)
-        self.steering_slider.setRange(-100, 100)
-        self.steering_slider.setValue(0)
-        self.steering_slider.valueChanged.connect(self.on_steering_change)
-        steering_layout.addWidget(QLabel("Steering"))
-        steering_layout.addWidget(self.steering_slider)
-        control_layout.addLayout(steering_layout)
+        # WASD Controls
+        wasd_layout = QGridLayout()
+        wasd_layout.setSpacing(10)
+        
+        # Create key displays
+        self.w_key = KeyDisplay("W")
+        self.a_key = KeyDisplay("A")
+        self.s_key = KeyDisplay("S")
+        self.d_key = KeyDisplay("D")
+        self.space_key = KeyDisplay("SPACE", width=120, height=35)  # Wide space bar
+        
+        # Add keys to grid
+        wasd_layout.addWidget(self.w_key, 0, 1)
+        wasd_layout.addWidget(self.a_key, 1, 0)
+        wasd_layout.addWidget(self.s_key, 1, 1)
+        wasd_layout.addWidget(self.d_key, 1, 2)
+        wasd_layout.addWidget(self.space_key, 2, 0, 1, 3)
+        
+        # Center the WASD grid in a QWidget
+        wasd_widget = QWidget()
+        wasd_widget.setLayout(wasd_layout)
+        wasd_outer_layout = QHBoxLayout()
+        wasd_outer_layout.addStretch(1)
+        wasd_outer_layout.addWidget(wasd_widget)
+        wasd_outer_layout.addStretch(1)
+        control_layout.addLayout(wasd_outer_layout)
         
         # Control buttons
         button_layout = QVBoxLayout()
@@ -63,7 +122,6 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.emergency_button)
         
         control_layout.addLayout(button_layout)
-        layout.addWidget(control_panel)
         
         # Video update timer
         self.timer = QTimer()
@@ -71,7 +129,42 @@ class MainWindow(QMainWindow):
         self.timer.start(33)  # ~30 FPS
         
         self.is_connected = False
+        self.current_speed = 50
         
+    def keyPressEvent(self, event: QKeyEvent):
+        if not self.is_connected:
+            return
+            
+        key = event.key()
+        if key == Qt.Key.Key_W:
+            self.w_key.set_active(True)
+            self.robot_client.send_command("drive", {"direction": "FORWARD", "speed": self.current_speed})
+        elif key == Qt.Key.Key_A:
+            self.a_key.set_active(True)
+            self.robot_client.send_command("drive", {"direction": "LEFT", "speed": self.current_speed})
+        elif key == Qt.Key.Key_S:
+            self.s_key.set_active(True)
+            self.robot_client.send_command("drive", {"direction": "BACKWARD", "speed": self.current_speed})
+        elif key == Qt.Key.Key_D:
+            self.d_key.set_active(True)
+            self.robot_client.send_command("drive", {"direction": "RIGHT", "speed": self.current_speed})
+        elif key == Qt.Key.Key_Space:
+            self.space_key.set_active(True)
+            self.emergency_stop()
+            
+    def keyReleaseEvent(self, event: QKeyEvent):
+        key = event.key()
+        if key == Qt.Key.Key_W:
+            self.w_key.set_active(False)
+        elif key == Qt.Key.Key_A:
+            self.a_key.set_active(False)
+        elif key == Qt.Key.Key_S:
+            self.s_key.set_active(False)
+        elif key == Qt.Key.Key_D:
+            self.d_key.set_active(False)
+        elif key == Qt.Key.Key_Space:
+            self.space_key.set_active(False)
+            
     def toggle_connection(self):
         if not self.is_connected:
             self.robot_client.connect()
@@ -83,17 +176,12 @@ class MainWindow(QMainWindow):
             self.is_connected = False
             
     def emergency_stop(self):
-        self.speed_slider.setValue(0)
-        self.steering_slider.setValue(0)
-        self.robot_client.send_command("emergency_stop")
+        self.robot_client.send_command("stop")
         
     def on_speed_change(self, value):
+        self.current_speed = value
         if self.is_connected:
             self.robot_client.send_command("set_speed", value)
-            
-    def on_steering_change(self, value):
-        if self.is_connected:
-            self.robot_client.send_command("set_steering", value)
             
     def update_video(self):
         if self.is_connected:
