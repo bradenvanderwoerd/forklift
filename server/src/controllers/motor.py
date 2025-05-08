@@ -1,6 +1,8 @@
 import RPi.GPIO as GPIO
 import time
 from typing import Tuple
+from config import MOTOR_PINS
+from config import MOTOR1_PWM, MOTOR2_PWM
 
 class PIDController:
     def __init__(self, kp: float = 1.0, ki: float = 0.1, kd: float = 0.05):
@@ -34,15 +36,15 @@ class MotorController:
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
         
-        # Motor pins
-        self.MOTOR1_PIN1 = 5   # Left motor forward
-        self.MOTOR1_PIN2 = 6   # Left motor backward
-        self.MOTOR2_PIN1 = 22  # Right motor forward
-        self.MOTOR2_PIN2 = 23  # Right motor backward
+        # Motor pins from config
+        self.MOTOR1_PIN1 = MOTOR_PINS['left_forward']
+        self.MOTOR1_PIN2 = MOTOR_PINS['left_backward']
+        self.MOTOR2_PIN1 = MOTOR_PINS['right_forward']
+        self.MOTOR2_PIN2 = MOTOR_PINS['right_backward']
         
-        # PWM pins
-        self.MOTOR1_PWM = 17   # Left motor speed
-        self.MOTOR2_PWM = 24   # Right motor speed
+        # PWM pins from config
+        self.MOTOR1_PWM = MOTOR1_PWM
+        self.MOTOR2_PWM = MOTOR2_PWM
         
         # Setup pins
         self._setup_pins()

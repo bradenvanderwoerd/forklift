@@ -16,13 +16,14 @@ VIDEO_FPS = 30
 
 # Hardware configuration
 MOTOR_PINS = {
-    'left_forward': 17,
-    'left_backward': 18,
+    'left_forward': 5,
+    'left_backward': 6,
     'right_forward': 22,
     'right_backward': 23
 }
-
-SERVO_PIN = 12  # GPIO pin for servo control
+MOTOR1_PWM = 17  # Left motor speed
+MOTOR2_PWM = 24  # Right motor speed
+SERVO_PIN = 25  # Servo PWM pin
 
 # Control configuration
 MAX_SPEED = 100
