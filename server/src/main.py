@@ -69,7 +69,7 @@ class ForkliftServer:
         self.command_server.register_handler('drive', self._handle_drive_command)
         self.command_server.register_handler('motor', self._handle_motor_command)
         self.command_server.register_handler('servo', self._handle_servo_command)
-        self.command_server.register_handler('emergency_stop', self._handle_emergency_stop)
+        self.command_server.register_handler('stop', self._handle_emergency_stop)
     
     def _handle_drive_command(self, data: Dict[str, Any]):
         logger.info("--- _handle_drive_command ENTERED ---")
@@ -125,10 +125,10 @@ class ForkliftServer:
         elif data.get('step_down'):
             self.servo_controller.step_down()
     
-    def _handle_emergency_stop(self, _: Dict[str, Any]):
+    def _handle_emergency_stop(self, data: Dict[str, Any]):
         """Handle emergency stop command"""
+        logger.info(f"--- _handle_emergency_stop ENTERED --- Data: {data}")
         self.motor_controller.stop()
-        self.servo_controller.set_position(0)
     
     def _run_video_server(self):
         """Run video server in a separate thread"""
