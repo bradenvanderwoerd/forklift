@@ -139,7 +139,7 @@ class ForkliftServer:
         """Handle emergency stop command"""
         logger.info(f"--- _handle_emergency_stop ENTERED --- Data: {data}")
         self.motor_controller.stop()
-        self.servo_controller.set_position(0) # Also set servo to 0 on emergency stop
+        # self.servo_controller.set_position(0) # Removed servo reset from general stop command
     
     def _run_video_server(self):
         """Run video server in a separate thread"""
@@ -201,8 +201,20 @@ class ForkliftServer:
             
         try:
             logger.info("Cleaning up...")
+
+            # Ensure motors are stopped and servo is reset first
+            try:
+                logger.info("Stopping motors definitively...")
+                self.motor_controller.stop()
+            except Exception as e:
+                logger.error(f"Error during motor_controller.stop() in cleanup: {e}")
+            try:
+                logger.info("Resetting servo to 0 definitively...")
+                self.servo_controller.set_position(0)
+            except Exception as e:
+                logger.error(f"Error during servo_controller.set_position(0) in cleanup: {e}")
             
-            # Stop components
+            # Then stop network components
             try:
                 self.video_streamer.stop()
                 logger.info("Video streamer stopped")
@@ -215,7 +227,7 @@ class ForkliftServer:
             except Exception as e:
                 logger.error(f"Error stopping command server: {e}")
             
-            # Clean up resources
+            # Then clean up resources for network components
             try:
                 self.video_streamer.cleanup()
                 logger.info("Video streamer cleaned up")
@@ -228,6 +240,7 @@ class ForkliftServer:
             except Exception as e:
                 logger.error(f"Error cleaning up command server: {e}")
                 
+            # Then clean up hardware controllers
             try:
                 self.motor_controller.cleanup()
                 logger.info("Motor controller cleaned up")
@@ -235,7 +248,6 @@ class ForkliftServer:
                 logger.error(f"Error cleaning up motor controller: {e}")
                 
             try:
-                self.servo_controller.set_position(0) # Set servo to 0 on shutdown
                 self.servo_controller.cleanup()
                 logger.info("Servo controller cleaned up")
             except Exception as e:
