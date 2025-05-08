@@ -65,9 +65,39 @@ class ForkliftServer:
     
     def _register_handlers(self):
         """Register command handlers"""
+        self.command_server.register_handler('drive', self._handle_drive_command)
         self.command_server.register_handler('motor', self._handle_motor_command)
         self.command_server.register_handler('servo', self._handle_servo_command)
         self.command_server.register_handler('emergency_stop', self._handle_emergency_stop)
+    
+    def _handle_drive_command(self, data: Dict[str, Any]):
+        """
+        Handle drive command from client.
+        Expects: {
+            "type": "DRIVE",
+            "action": "START" or "STOP",
+            "direction": "FORWARD"|"BACKWARD"|"LEFT"|"RIGHT"|"NONE",
+            "speed": int (0-100)
+        }
+        """
+        direction = data.get("direction", "NONE")
+        speed = data.get("speed", 0)
+        action = data.get("action", "STOP")
+
+        if action == "STOP" or direction == "NONE":
+            self.motor_controller.stop()
+            return
+
+        if direction == "FORWARD":
+            self.motor_controller.drive_forward(speed)
+        elif direction == "BACKWARD":
+            self.motor_controller.drive_backward(speed)
+        elif direction == "LEFT":
+            self.motor_controller.turn_left(speed)
+        elif direction == "RIGHT":
+            self.motor_controller.turn_right(speed)
+        else:
+            self.motor_controller.stop()
     
     def _handle_motor_command(self, data: Dict[str, Any]):
         """Handle motor control command

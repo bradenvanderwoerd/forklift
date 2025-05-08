@@ -115,4 +115,48 @@ class MotorController:
         self.stop()
         self.pwm1.stop()
         self.pwm2.stop()
-        GPIO.cleanup() 
+        GPIO.cleanup()
+
+    def drive_forward(self, speed: float):
+        """Drive both motors forward at the given speed (0-100)"""
+        speed = max(0, min(100, speed))
+        GPIO.output(self.MOTOR1_PIN1, GPIO.HIGH)
+        GPIO.output(self.MOTOR1_PIN2, GPIO.LOW)
+        GPIO.output(self.MOTOR2_PIN1, GPIO.HIGH)
+        GPIO.output(self.MOTOR2_PIN2, GPIO.LOW)
+        self.pwm1.ChangeDutyCycle(speed)
+        self.pwm2.ChangeDutyCycle(speed)
+        self.current_speed = speed
+
+    def drive_backward(self, speed: float):
+        """Drive both motors backward at the given speed (0-100)"""
+        speed = max(0, min(100, speed))
+        GPIO.output(self.MOTOR1_PIN1, GPIO.LOW)
+        GPIO.output(self.MOTOR1_PIN2, GPIO.HIGH)
+        GPIO.output(self.MOTOR2_PIN1, GPIO.LOW)
+        GPIO.output(self.MOTOR2_PIN2, GPIO.HIGH)
+        self.pwm1.ChangeDutyCycle(speed)
+        self.pwm2.ChangeDutyCycle(speed)
+        self.current_speed = -speed
+
+    def turn_left(self, speed: float):
+        """Turn left by running left motor backward and right motor forward"""
+        speed = max(0, min(100, speed))
+        GPIO.output(self.MOTOR1_PIN1, GPIO.LOW)
+        GPIO.output(self.MOTOR1_PIN2, GPIO.HIGH)
+        GPIO.output(self.MOTOR2_PIN1, GPIO.HIGH)
+        GPIO.output(self.MOTOR2_PIN2, GPIO.LOW)
+        self.pwm1.ChangeDutyCycle(speed)
+        self.pwm2.ChangeDutyCycle(speed)
+        self.current_speed = 0
+
+    def turn_right(self, speed: float):
+        """Turn right by running right motor backward and left motor forward"""
+        speed = max(0, min(100, speed))
+        GPIO.output(self.MOTOR1_PIN1, GPIO.HIGH)
+        GPIO.output(self.MOTOR1_PIN2, GPIO.LOW)
+        GPIO.output(self.MOTOR2_PIN1, GPIO.LOW)
+        GPIO.output(self.MOTOR2_PIN2, GPIO.HIGH)
+        self.pwm1.ChangeDutyCycle(speed)
+        self.pwm2.ChangeDutyCycle(speed)
+        self.current_speed = 0 
