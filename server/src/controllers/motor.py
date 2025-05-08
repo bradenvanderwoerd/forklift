@@ -3,6 +3,9 @@ import time
 from typing import Tuple
 from config import MOTOR_PINS
 from config import MOTOR1_PWM, MOTOR2_PWM
+import logging
+
+logger = logging.getLogger(__name__)
 
 class PIDController:
     def __init__(self, kp: float = 1.0, ki: float = 0.1, kd: float = 0.05):
@@ -74,25 +77,20 @@ class MotorController:
         Args:
             speed: Target speed (-100 to 100)
         """
-        # Clamp speed to valid range
-        speed = max(-100, min(100, speed))
-        
-        # Get PID-adjusted speed
+        speed = max(-100, min(100, speed)) # Clamp input target speed
         adjusted_speed = self.pid_controller.compute(speed, self.current_speed)
-        
-        # Apply speed to motors
-        self._apply_speed(adjusted_speed)
+        self._apply_speed(adjusted_speed) # Pass PID-adjusted speed
         self.current_speed = speed
     
     def _apply_speed(self, speed: float):
         """Apply speed to both motors
         
         Args:
-            speed: Speed value (-100 to 100)
+            speed: Speed value, potentially from PID so could be outside -100 to 100
         """
-        # Determine direction and magnitude
         direction = 1 if speed >= 0 else -1
-        magnitude = abs(speed)
+        # Clamp magnitude to 0-100 before applying to PWM
+        magnitude = max(0, min(100, abs(speed)))
         
         # Set motor directions
         GPIO.output(self.MOTOR1_PIN1, GPIO.HIGH if direction > 0 else GPIO.LOW)
@@ -105,12 +103,18 @@ class MotorController:
         self.pwm2.ChangeDutyCycle(magnitude)
     
     def stop(self):
-        """Stop both motors"""
-        self.set_speed(0)
+        """Stop both motors directly, bypassing PID for an immediate stop."""
+        logger.info("MotorController.stop() called - setting PWMs to 0 and pins to LOW.") # Added log
+        self.pwm1.ChangeDutyCycle(0)
+        self.pwm2.ChangeDutyCycle(0)
         GPIO.output(self.MOTOR1_PIN1, GPIO.LOW)
         GPIO.output(self.MOTOR1_PIN2, GPIO.LOW)
         GPIO.output(self.MOTOR2_PIN1, GPIO.LOW)
         GPIO.output(self.MOTOR2_PIN2, GPIO.LOW)
+        self.current_speed = 0 # Reset current speed state
+        # Reset PID controller state when stopping to prevent integral windup issues on restart
+        self.pid_controller.integral = 0 
+        self.pid_controller.previous_error = 0
     
     def cleanup(self):
         """Clean up GPIO resources"""
