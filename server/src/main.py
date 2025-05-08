@@ -82,9 +82,7 @@ class ForkliftServer:
             return
 
         if direction == "FORWARD":
-            # TEST: Pulse the servo pin HIGH for 0.5s, then LOW
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setup(SERVO_PIN, GPIO.OUT)
+            # TEST: Pulse the servo pin HIGH for 0.5s, then LOW (pin already set up at startup)
             GPIO.output(SERVO_PIN, GPIO.HIGH)
             logger.info("Pulsing SERVO_PIN HIGH for test")
             time.sleep(0.5)

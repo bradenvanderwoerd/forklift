@@ -1,15 +1,14 @@
+from config import SERVO_PIN
 import RPi.GPIO as GPIO
 import time
 from typing import Optional
 
 class ServoController:
-    def __init__(self, pin: int = 25):
-        """Initialize servo controller
-        
-        Args:
-            pin: GPIO pin number for servo PWM
-        """
-        self.pin = pin
+    def __init__(self):
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setwarnings(False)
+        GPIO.setup(SERVO_PIN, GPIO.OUT)
+        self.pin = SERVO_PIN
         self.current_position = 0
         self.target_position = 0
         self.step_size = 5  # Degrees per step
@@ -17,7 +16,6 @@ class ServoController:
         self.max_angle = 45
         
         # PWM setup
-        GPIO.setup(self.pin, GPIO.OUT)
         self.pwm = GPIO.PWM(self.pin, 50)  # 50 Hz
         self.pwm.start(0)
     
