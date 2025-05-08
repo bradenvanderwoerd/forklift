@@ -48,6 +48,7 @@ class ForkliftServer:
         # Initialize hardware controllers
         self.motor_controller = MotorController()
         self.servo_controller = ServoController()
+        self.servo_controller.set_position(0)  # Set servo to 0 on startup
         
         # Initialize network components
         self.video_streamer = VideoStreamer()
@@ -138,6 +139,7 @@ class ForkliftServer:
         """Handle emergency stop command"""
         logger.info(f"--- _handle_emergency_stop ENTERED --- Data: {data}")
         self.motor_controller.stop()
+        self.servo_controller.set_position(0) # Also set servo to 0 on emergency stop
     
     def _run_video_server(self):
         """Run video server in a separate thread"""
@@ -233,6 +235,7 @@ class ForkliftServer:
                 logger.error(f"Error cleaning up motor controller: {e}")
                 
             try:
+                self.servo_controller.set_position(0) # Set servo to 0 on shutdown
                 self.servo_controller.cleanup()
                 logger.info("Servo controller cleaned up")
             except Exception as e:

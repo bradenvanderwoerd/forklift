@@ -161,10 +161,10 @@ class MainWindow(QMainWindow):
             self.emergency_stop()
         elif key == Qt.Key.Key_Up:
             self.up_arrow_key.set_active(True)
-            self.robot_client.send_command("servo", {"step_up": True})
+            self.robot_client.send_command("servo", {"step_down": True})
         elif key == Qt.Key.Key_Down:
             self.down_arrow_key.set_active(True)
-            self.robot_client.send_command("servo", {"step_down": True})
+            self.robot_client.send_command("servo", {"step_up": True})
             
     def keyReleaseEvent(self, event: QKeyEvent):
         key = event.key()

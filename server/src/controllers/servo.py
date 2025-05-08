@@ -16,7 +16,7 @@ class ServoController:
         self.target_position = 0
         self.step_size = 2  # Changed from 5 to 2 degrees per step
         self.min_angle = 0
-        self.max_angle = 90  # Changed from 45 to 90 degrees
+        self.max_angle = 80  # Changed from 90 to 80 degrees
         
         # PWM setup
         self.pwm = GPIO.PWM(self.pin, 50)  # 50 Hz
@@ -26,7 +26,7 @@ class ServoController:
         """Set servo position
         
         Args:
-            angle: Target angle (0-90 degrees)
+            angle: Target angle (0-80 degrees)
         """
         # Clamp angle to valid range
         angle = max(self.min_angle, min(self.max_angle, angle))
