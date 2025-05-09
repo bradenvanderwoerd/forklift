@@ -38,6 +38,9 @@ class ServoController:
         return 2.5 + (angle / 180.0) * 10.0
     
     def set_position(self, target_angle: float, blocking: bool = True):
+        # --- VERYVERBOSE DEBUG LOG --- 
+        logger.critical(f"!!!! SERVO set_position CALLED with target_angle: {target_angle}, current_position: {self.current_position} !!!!")
+        
         target_angle = max(self.min_angle, min(self.max_angle, target_angle))
         current_angle_for_log = self.current_position # For logging clarity
         logger.info(f"Servo (Direct Mode Test): Requested move from {current_angle_for_log:.2f} to {target_angle:.2f} degrees.")
@@ -46,7 +49,10 @@ class ServoController:
         try:
             self.pwm.stop()
             GPIO.output(self.pin, GPIO.LOW) # Ensure pin is low if pwm was running
-        except Exception: # May occur if not started, or on first call if somehow uninitialized
+        except RuntimeError: # Catch if PWM was not running (common if called after __init__)
+            GPIO.output(self.pin, GPIO.LOW) 
+        except Exception as e:
+            logger.debug(f"Servo: Exception during pre-move pwm.stop/output_low: {e}")
             pass
 
         # Start PWM directly at the final target duty cycle
