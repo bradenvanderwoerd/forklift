@@ -41,7 +41,7 @@ MOTOR_RIGHT_BACKWARD_PIN = 23
 MOTOR_RIGHT_PWM_PIN = 24
 
 # Servo Control
-SERVO_PWM_PIN = 25
+SERVO_PWM_PIN = 13
 
 # --- Forklift Servo Positions (Calibrated based on testing) ---
 FORK_DOWN_POSITION = 10  # Safe down position

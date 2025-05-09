@@ -1,80 +1,110 @@
 from ..utils.config import SERVO_PWM_PIN, FORK_DOWN_POSITION, FORK_UP_POSITION, SERVO_STEP_DEGREES, SERVO_STEP_DELAY_SECONDS
-import RPi.GPIO as GPIO
+import pigpio # Changed from RPi.GPIO
 import time
 from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
 
+# Standard Servo Pulse Widths
+SERVO_MIN_PULSEWIDTH = 500  # Microseconds for 0 degrees (typical)
+SERVO_MAX_PULSEWIDTH = 2500 # Microseconds for 180 degrees (typical)
+
 class ServoController:
     def __init__(self):
-        GPIO.setup(SERVO_PWM_PIN, GPIO.OUT) 
         self.pin = SERVO_PWM_PIN
-        self.current_position = FORK_DOWN_POSITION 
+        self.current_position_degrees = FORK_DOWN_POSITION 
         
         self.step_degrees = SERVO_STEP_DEGREES
         self.step_delay_seconds = SERVO_STEP_DELAY_SECONDS
         
-        self.min_angle = FORK_DOWN_POSITION 
-        self.max_angle = FORK_UP_POSITION  
-        
-        self.pwm = GPIO.PWM(self.pin, 60) # Changed frequency from 50Hz to 60Hz for testing
-        initial_duty_cycle = self._angle_to_duty_cycle(self.current_position)
-        self.pwm.start(initial_duty_cycle) # Start PWM at initial position
-        # PWM is now left running. No sleep, stop, or pin LOW here.
-        logger.info(f"ServoController initialized. Position: {self.current_position:.2f} deg. PWM active.")
+        # min_angle_degrees and max_angle_degrees define the calibrated safe operating range
+        self.min_angle_degrees = FORK_DOWN_POSITION 
+        self.max_angle_degrees = FORK_UP_POSITION  
 
-    def _angle_to_duty_cycle(self, angle: float) -> float:
-        """Converts an angle (0-180 nominally) to a PWM duty cycle (2.5-12.5 for SG90 type servos)."""
-        # Standard SG90 servo: 0 deg = 2.5% duty, 180 deg = 12.5% duty.
-        # Ensure angle is within a reasonable servo operating range if necessary, though clamping happens in set_position.
-        return 2.5 + (angle / 180.0) * 10.0
-    
-    def set_position(self, target_angle: float, blocking: bool = True):
-        # Remove CRITICAL log for now, can be re-added if needed
-        # logger.critical(f"!!!! SERVO set_position CALLED with target_angle: {target_angle}, current_position: {self.current_position} !!!!")
-        
-        target_angle = max(self.min_angle, min(self.max_angle, target_angle))
-        logger.info(f"Servo: Moving from {self.current_position:.2f} to {target_angle:.2f} degrees.")
-
-        if abs(self.current_position - target_angle) < self.step_degrees / 2.0:
-            logger.debug("Servo: Already at target angle or very close.")
-            # Ensure final position is accurately set if slightly off
-            if self.current_position != target_angle:
-                 self.pwm.ChangeDutyCycle(self._angle_to_duty_cycle(target_angle))
-                 self.current_position = target_angle
-            # No sleep or pwm.stop() needed, PWM stays active to hold position
+        try:
+            self.pi = pigpio.pi() 
+            if not self.pi.connected:
+                raise RuntimeError("Failed to connect to pigpiod. Is the daemon running?")
+        except Exception as e:
+            logger.error(f"pigpio initialization failed: {e}. Servo will not function.")
+            self.pi = None # Ensure pi is None if connection failed
+            # Potentially re-raise or handle more gracefully depending on desired app behavior
             return
 
-        if target_angle > self.current_position:
+        self.pi.set_mode(self.pin, pigpio.OUTPUT) # Set pin as output
+        
+        # Initialize servo to its starting position then stop pulses
+        initial_pulsewidth = self._angle_to_pulsewidth(self.current_position_degrees)
+        self.pi.set_servo_pulsewidth(self.pin, initial_pulsewidth)
+        time.sleep(0.5) # Allow time for servo to reach initial position
+        self.pi.set_servo_pulsewidth(self.pin, 0) # Stop sending pulses
+        logger.info(f"ServoController initialized with pigpio. Pin: {self.pin}, Initial Pos: {self.current_position_degrees:.2f} deg. Pulses stopped.")
+
+    def _angle_to_pulsewidth(self, angle_degrees: float) -> int:
+        """Converts an angle in degrees to a servo pulse width in microseconds."""
+        # Clamp angle to 0-180 for the general conversion formula
+        clamped_angle = max(0, min(180, angle_degrees))
+        pulsewidth = SERVO_MIN_PULSEWIDTH + (clamped_angle / 180.0) * (SERVO_MAX_PULSEWIDTH - SERVO_MIN_PULSEWIDTH)
+        return int(round(pulsewidth))
+
+    def set_position(self, target_angle_degrees: float, blocking: bool = True):
+        if not self.pi or not self.pi.connected:
+            logger.error("pigpio not connected. Cannot set servo position.")
+            return
+
+        # Clamp target_angle_degrees to the calibrated min/max for this servo
+        target_angle_degrees = max(self.min_angle_degrees, min(self.max_angle_degrees, target_angle_degrees))
+        
+        logger.info(f"Servo: Moving from {self.current_position_degrees:.2f} to {target_angle_degrees:.2f} degrees.")
+
+        # If already very close, set final pulse width and stop pulses
+        if abs(self.current_position_degrees - target_angle_degrees) < self.step_degrees / 2.0:
+            logger.debug("Servo: Already at target angle or very close.")
+            final_pulsewidth = self._angle_to_pulsewidth(target_angle_degrees)
+            self.pi.set_servo_pulsewidth(self.pin, final_pulsewidth)
+            self.current_position_degrees = target_angle_degrees # Update software position
+            if blocking: # Allow a moment for the final set to take effect
+                time.sleep(max(self.step_delay_seconds, 0.05))
+            self.pi.set_servo_pulsewidth(self.pin, 0) # Stop sending pulses
+            logger.info(f"Servo: At target {self.current_position_degrees:.2f} deg. Pulses stopped.")
+            return
+
+        # Stepping logic
+        if target_angle_degrees > self.current_position_degrees:
             direction = 1
         else:
             direction = -1
         
-        num_steps = int(abs(target_angle - self.current_position) / self.step_degrees)
-        if num_steps == 0 and self.current_position != target_angle: 
+        num_steps = int(abs(target_angle_degrees - self.current_position_degrees) / self.step_degrees)
+        if num_steps == 0 and self.current_position_degrees != target_angle_degrees: 
             num_steps = 1
 
         for i in range(num_steps):
-            next_step_angle = self.current_position + (direction * self.step_degrees)
-            if (direction == 1 and next_step_angle > target_angle) or \
-               (direction == -1 and next_step_angle < target_angle):
-                next_step_angle = target_angle
+            next_step_angle = self.current_position_degrees + (direction * self.step_degrees)
+            # Ensure we don't overshoot the final target_angle_degrees with the last step
+            if (direction == 1 and next_step_angle > target_angle_degrees) or \
+               (direction == -1 and next_step_angle < target_angle_degrees):
+                next_step_angle = target_angle_degrees
             
-            self.pwm.ChangeDutyCycle(self._angle_to_duty_cycle(next_step_angle))
-            self.current_position = next_step_angle
+            step_pulsewidth = self._angle_to_pulsewidth(next_step_angle)
+            self.pi.set_servo_pulsewidth(self.pin, step_pulsewidth)
+            self.current_position_degrees = next_step_angle 
             if blocking:
                 time.sleep(self.step_delay_seconds)
         
-        # Final precise position set by the loop or initial check
-        # Ensure the duty cycle reflects the final target_angle if loop didn't hit it exactly
-        # (though it should if step_degrees is small)
-        if self.current_position != target_angle: # Should be rare with small steps
-            self.pwm.ChangeDutyCycle(self._angle_to_duty_cycle(target_angle))
-            self.current_position = target_angle
+        # Ensure final pulse width is set for the exact target angle
+        final_target_pulsewidth = self._angle_to_pulsewidth(target_angle_degrees)
+        self.pi.set_servo_pulsewidth(self.pin, final_target_pulsewidth)
+        self.current_position_degrees = target_angle_degrees # Final update of software position
         
-        # PWM remains active at the target_angle duty cycle to hold position
-        logger.info(f"Servo: Reached target position {self.current_position:.2f} degrees. PWM holding.")
+        # Allow servo to reach the position and then stop sending pulses
+        if blocking:
+            final_settle_delay = max(self.step_delay_seconds, 0.3) # Use the previously determined good delay
+            time.sleep(final_settle_delay)
+        
+        self.pi.set_servo_pulsewidth(self.pin, 0) # Stop sending pulses
+        logger.info(f"Servo: Reached target {self.current_position_degrees:.2f} deg. Pulses stopped.")
     
     def go_to_down_position(self, blocking: bool = True):
         logger.info("Servo: Moving to FORK_DOWN_POSITION.")
@@ -85,17 +115,14 @@ class ServoController:
         self.set_position(FORK_UP_POSITION, blocking=blocking)
 
     def get_position(self) -> float:
-        """Get current servo position
-        
-        Returns:
-            Current position in degrees
-        """
-        return self.current_position
+        return self.current_position_degrees
     
     def cleanup(self):
-        logger.info("Servo: Cleanup called. Stopping PWM and cleaning GPIO.")
-        try:
-            self.pwm.stop()
-        except Exception as e:
-            logger.debug(f"Servo: Exception during pwm.stop() in cleanup: {e}")
-        GPIO.cleanup([self.pin]) 
+        logger.info("Servo: Cleanup called. Stopping pulses and pigpio connection.")
+        if self.pi and self.pi.connected:
+            try:
+                self.pi.set_servo_pulsewidth(self.pin, 0) # Turn servo off
+                self.pi.stop() # Disconnect from pigpiod
+            except Exception as e:
+                logger.error(f"Error during pigpio cleanup: {e}")
+        # No RPi.GPIO.cleanup needed here 
