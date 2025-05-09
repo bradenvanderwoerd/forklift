@@ -17,8 +17,8 @@ class ServoController:
         self.step_degrees = SERVO_STEP_DEGREES
         self.step_delay_seconds = SERVO_STEP_DELAY_SECONDS
         
-        self.min_angle = 0 # Physical min angle of servo/forklift
-        self.max_angle = 80  # Physical max angle of servo/forklift (example)
+        self.min_angle = 10 # Physical min angle of servo/forklift
+        self.max_angle = 45  # Physical max angle of servo/forklift (example)
         
         # PWM setup
         self.pwm = GPIO.PWM(self.pin, 50)  # Uncomment 

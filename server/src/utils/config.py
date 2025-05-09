@@ -44,8 +44,8 @@ MOTOR_RIGHT_PWM_PIN = 24
 SERVO_PWM_PIN = 25
 
 # --- Forklift Servo Positions (Placeholders - needs calibration) ---
-FORK_DOWN_POSITION = 0  # Example angle
-FORK_UP_POSITION = 90   # Example angle
+FORK_DOWN_POSITION = 10  # Example angle
+FORK_UP_POSITION = 45   # Example angle
 
 # --- Control Configuration ---
 MAX_SPEED = 100      # From old config.py
