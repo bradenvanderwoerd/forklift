@@ -8,11 +8,11 @@ import logging
 import asyncio
 import RPi.GPIO as GPIO
 
-from controllers.motor import MotorController
-from controllers.servo import ServoController
-from network.video_stream import VideoStreamer
-from network.tcp_server import CommandServer
-from utils.config import HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, SERVO_PWM_PIN
+from .controllers.motor import MotorController
+from .controllers.servo import ServoController
+from .network.video_stream import VideoStreamer
+from .network.tcp_server import CommandServer
+from .utils.config import HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, SERVO_PWM_PIN
 
 # Set up logging
 logging.basicConfig(
