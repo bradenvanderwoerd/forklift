@@ -73,22 +73,27 @@ class MainWindow(QMainWindow):
         self.video_label.setMinimumHeight(480)
         layout.addWidget(self.video_label, stretch=2)
         
-        # Control panel
-        control_panel = QWidget()
-        control_layout = QHBoxLayout(control_panel)
-        layout.addWidget(control_panel, stretch=1)
+        # --- Control Panel Area ---
+        control_panel_area = QWidget()
+        # Use a QVBoxLayout for the main control area to stack groups
+        main_control_layout = QVBoxLayout(control_panel_area) 
+        layout.addWidget(control_panel_area, stretch=1)
+
+        # --- Row 1: Manual Drive Controls (Speed + Keys) ---
+        manual_drive_controls_widget = QWidget()
+        manual_drive_layout = QHBoxLayout(manual_drive_controls_widget)
         
-        # Speed control
+        # Speed control (remains QVBoxLayout internally)
         speed_layout = QVBoxLayout()
         self.speed_slider = QSlider(Qt.Orientation.Vertical)
         self.speed_slider.setRange(0, 100)
-        self.speed_slider.setValue(50)  # Start at 50%
+        self.speed_slider.setValue(50)
         self.speed_slider.valueChanged.connect(self.on_speed_change)
         speed_layout.addWidget(QLabel("Speed"))
         speed_layout.addWidget(self.speed_slider)
-        control_layout.addLayout(speed_layout)
+        manual_drive_layout.addLayout(speed_layout)
         
-        # WASD Controls & Servo Arrows
+        # WASD Controls & Servo Arrows (remains QGridLayout internally, then centered)
         wasd_layout = QGridLayout()
         wasd_layout.setSpacing(10)
         
@@ -121,9 +126,11 @@ class MainWindow(QMainWindow):
         key_grid_outer_layout.addStretch(1)
         key_grid_outer_layout.addWidget(key_grid_widget)
         key_grid_outer_layout.addStretch(1)
-        control_layout.addLayout(key_grid_outer_layout)
+        manual_drive_layout.addLayout(key_grid_outer_layout)
         
-        # PID Tuning UI Section
+        main_control_layout.addWidget(manual_drive_controls_widget) # Add this row to the main vertical layout
+
+        # --- Row 2: PID Tuning UI Section ---
         self.pid_tuning_group = QGroupBox("PID Tuning")
         pid_tuning_layout = QFormLayout(self.pid_tuning_group)
         pid_tuning_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
@@ -150,26 +157,29 @@ class MainWindow(QMainWindow):
         
         self.pid_tuning_group.setEnabled(False)
 
-        control_layout.addWidget(self.pid_tuning_group)
+        main_control_layout.addWidget(self.pid_tuning_group) # Add PID group to the main vertical layout
 
-        # Control buttons
-        button_layout = QVBoxLayout()
+        # --- Row 3: Global Control Buttons (Connect, AutoNav, E-Stop) ---
+        global_buttons_widget = QWidget()
+        global_buttons_layout = QHBoxLayout(global_buttons_widget) # Arrange these horizontally
+        global_buttons_layout.addStretch(1) # Center the buttons
+
         self.connect_button = QPushButton("Connect")
         self.connect_button.clicked.connect(self.toggle_connection)
-        button_layout.addWidget(self.connect_button)
+        global_buttons_layout.addWidget(self.connect_button)
         
-        # Auto-Nav Toggle Button
         self.autonav_button = QPushButton("Start Auto-Nav")
         self.autonav_button.clicked.connect(self.toggle_autonav)
-        self.autonav_button.setEnabled(False) # Disabled until connected
-        button_layout.addWidget(self.autonav_button)
+        self.autonav_button.setEnabled(False)
+        global_buttons_layout.addWidget(self.autonav_button)
         
         self.emergency_button = QPushButton("Emergency Stop")
         self.emergency_button.setStyleSheet("background-color: red; color: white;")
         self.emergency_button.clicked.connect(self.emergency_stop)
-        button_layout.addWidget(self.emergency_button)
-        
-        control_layout.addLayout(button_layout)
+        global_buttons_layout.addWidget(self.emergency_button)
+
+        global_buttons_layout.addStretch(1) # Center the buttons
+        main_control_layout.addWidget(global_buttons_widget) # Add this row to the main vertical layout
         
         # Video update timer
         self.timer = QTimer()
