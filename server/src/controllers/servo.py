@@ -1,4 +1,4 @@
-from config import SERVO_PIN
+from ..utils.config import SERVO_PWM_PIN
 import RPi.GPIO as GPIO
 import time
 from typing import Optional
@@ -8,8 +8,8 @@ logger = logging.getLogger(__name__)
 
 class ServoController:
     def __init__(self):
-        GPIO.setup(SERVO_PIN, GPIO.OUT)
-        self.pin = SERVO_PIN
+        GPIO.setup(SERVO_PWM_PIN, GPIO.OUT)
+        self.pin = SERVO_PWM_PIN
         self.current_position = 0
         self.target_position = 0
         self.step_size = 2  # Changed from 5 to 2 degrees per step

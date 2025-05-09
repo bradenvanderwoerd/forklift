@@ -40,7 +40,7 @@ class ForkliftServer:
         self.cleanup_lock = threading.Lock()
         self.cleanup_complete = threading.Event()
         
-        # Check port availability
+        # Check port availability using new config variable names
         if not check_port_availability(SERVER_TCP_PORT):
             logger.error(f"Command port {SERVER_TCP_PORT} is already in use!")
             sys.exit(1)
@@ -53,9 +53,9 @@ class ForkliftServer:
         self.servo_controller = ServoController()
         self.servo_controller.set_position(0)  # Set servo to 0 on startup
         
-        # Initialize network components
-        self.video_streamer = VideoStreamer()
-        self.command_server = CommandServer()
+        # Initialize network components, passing configured host and ports
+        self.video_streamer = VideoStreamer(host=HOST, port=SERVER_VIDEO_UDP_PORT)
+        self.command_server = CommandServer(host=HOST, port=SERVER_TCP_PORT)
         
         # Register command handlers
         self._register_handlers()

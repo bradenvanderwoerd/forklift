@@ -1,8 +1,11 @@
 import RPi.GPIO as GPIO
 import time
 from typing import Tuple
-from config import MOTOR_PINS
-from config import MOTOR1_PWM, MOTOR2_PWM
+# Updated import to use relative path to the consolidated config
+from ..utils.config import (
+    MOTOR_LEFT_FORWARD_PIN, MOTOR_LEFT_BACKWARD_PIN, MOTOR_LEFT_PWM_PIN,
+    MOTOR_RIGHT_FORWARD_PIN, MOTOR_RIGHT_BACKWARD_PIN, MOTOR_RIGHT_PWM_PIN
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -38,15 +41,15 @@ class MotorController:
         # GPIO.setmode(GPIO.BCM) # Removed
         # GPIO.setwarnings(False) # Removed
         
-        # Motor pins from config
-        self.MOTOR1_PIN1 = MOTOR_PINS['left_forward']
-        self.MOTOR1_PIN2 = MOTOR_PINS['left_backward']
-        self.MOTOR2_PIN1 = MOTOR_PINS['right_forward']
-        self.MOTOR2_PIN2 = MOTOR_PINS['right_backward']
+        # Motor pins from the new config
+        self.MOTOR1_PIN1 = MOTOR_LEFT_FORWARD_PIN    # Left motor forward
+        self.MOTOR1_PIN2 = MOTOR_LEFT_BACKWARD_PIN   # Left motor backward
+        self.MOTOR2_PIN1 = MOTOR_RIGHT_FORWARD_PIN   # Right motor forward
+        self.MOTOR2_PIN2 = MOTOR_RIGHT_BACKWARD_PIN  # Right motor backward
         
-        # PWM pins from config
-        self.MOTOR1_PWM = MOTOR1_PWM
-        self.MOTOR2_PWM = MOTOR2_PWM
+        # PWM pins from the new config
+        self.MOTOR1_PWM = MOTOR_LEFT_PWM_PIN       # Left motor PWM
+        self.MOTOR2_PWM = MOTOR_RIGHT_PWM_PIN      # Right motor PWM
         
         # Setup pins
         self._setup_pins()

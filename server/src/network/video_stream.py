@@ -116,12 +116,12 @@ class VideoStreamer:
             # Initialize the camera using picamera2
             self.camera = Picamera2()
             
-            # Configure the camera
-            config = self.camera.create_video_configuration(
-                main={"size": (640, 480), "format": "RGB888"},
-                lores={"size": (640, 480), "format": "YUV420"}
+            # Configure the camera using dimensions from config
+            camera_config = self.camera.create_video_configuration(
+                main={"size": (config.VIDEO_WIDTH, config.VIDEO_HEIGHT), "format": "RGB888"},
+                lores={"size": (config.VIDEO_WIDTH, config.VIDEO_HEIGHT), "format": "YUV420"} # Keep lores same for simplicity or adjust if needed
             )
-            self.camera.configure(config)
+            self.camera.configure(camera_config)
             
             # Start the camera
             self.camera.start()
@@ -130,7 +130,7 @@ class VideoStreamer:
             try:
                 self.camera.capture_array()
                 logger.info("Camera initialized successfully")
-                logger.info(f"Camera configuration: {config}")
+                logger.info(f"Camera configuration: {camera_config}")
             except Exception as e:
                 raise RuntimeError(f"Failed to start camera: {e}")
                 
