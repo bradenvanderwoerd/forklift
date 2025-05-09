@@ -56,8 +56,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Forklift Control")
-        self.setMinimumSize(950, 680)
-        self.resize(950, 680)
+        self.setMinimumSize(950, 880)
+        self.resize(950, 880)
         
         # Initialize robot client
         self.robot_client = RobotClient()
@@ -76,7 +76,7 @@ class MainWindow(QMainWindow):
         # Control panel - Revert to QHBoxLayout for the main control area
         control_panel = QWidget()
         control_layout = QHBoxLayout(control_panel) # This is the main horizontal layout for controls
-        layout.addWidget(control_panel, stretch=1)
+        layout.addWidget(control_panel, stretch=3)
         
         # --- Item 1: Speed control (far left) ---
         speed_layout = QVBoxLayout()

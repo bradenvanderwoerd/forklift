@@ -118,10 +118,10 @@ class NavigationController:
         tvec, rvec = self.current_target_pose
         
         # Target x-coordinate in camera frame (error for turning PID)
-        # tvec is [ [[x, y, z]] ] for a single marker
-        target_x_cam = tvec[0][0][0]
+        # tvec from estimatePoseSingleMarkers (for a single marker in the tvecs array) is shape (1,3), i.e., [[x, y, z]]
+        target_x_cam = tvec[0][0]
         # Current distance to marker (along Z-axis in camera frame)
-        current_distance_cam = tvec[0][0][2]
+        current_distance_cam = tvec[0][2]
 
         # Check if we are at the target position
         if self.is_at_target(target_x_cam, current_distance_cam):
