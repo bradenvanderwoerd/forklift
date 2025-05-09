@@ -163,6 +163,8 @@ class VideoStreamer:
                 frame_color = cv2.rotate(frame_color, cv2.ROTATE_180)
                 
                 # --- ArUco Detection --- 
+                aruco_start_time = time.time() # Start timer
+                
                 gray_frame = cv2.cvtColor(frame_color, cv2.COLOR_RGB2GRAY)
                 corners, ids, rejected = self.aruco_detector.detectMarkers(gray_frame)
                 
@@ -233,9 +235,22 @@ class VideoStreamer:
                         if not hasattr(self, '_warned_missing_calib_for_pose'):
                             logger.warning("Camera calibration data not available. Skipping pose estimation and axis drawing.")
                             self._warned_missing_calib_for_pose = True # Warn only once
+
+                    # Log ArUco processing time after all main processing for this frame's markers is done
+                    aruco_processing_time = (time.time() - aruco_start_time) * 1000 # in milliseconds
+                    logger.debug(f"ArUco processing (detection & pose) time: {aruco_processing_time:.2f} ms")
+                    
+                    # --- End ArUco Pose Estimation --- (Visualization part still happens below)
+                    # The original "End ArUco Detection & Pose Estimation" comment was slightly misplaced if including visualization timing
+                    
+                    # Visualization part (drawFrameAxes was inside the loop)
+                    # drawDetectedMarkers was at the start of 'if ids is not None'
                 else:
                     frame_display = frame_color
-                # --- End ArUco Detection & Pose Estimation ---
+                    # If no IDs, still record a processing time (minimal, but good for consistency)
+                    aruco_processing_time = (time.time() - aruco_start_time) * 1000 # in milliseconds
+                    logger.debug(f"ArUco processing (no IDs found) time: {aruco_processing_time:.2f} ms")
+                # --- End ArUco Detection (overall) ---
 
                 # Reset last_logged_primary_target_id if no markers are seen in this frame
                 if ids is None and self.last_logged_primary_target_id is not None:

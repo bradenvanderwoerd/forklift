@@ -10,6 +10,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# MIN_OPERATIONAL_PWM = 15 # Reverting this change
+
 class PIDController:
     def __init__(self, kp: float = 1.0, ki: float = 0.1, kd: float = 0.05):
         self.kp = kp
@@ -156,21 +158,29 @@ class MotorController:
     def turn_left(self, speed: float):
         """Turn left by running left motor backward and right motor forward"""
         speed = max(0, min(100, speed))
+        # effective_speed = 0 # Reverting
+        # if speed > 0: # Reverting
+        #     effective_speed = max(MIN_OPERATIONAL_PWM, speed) # Reverting
+            
         GPIO.output(self.MOTOR1_PIN1, GPIO.LOW)
         GPIO.output(self.MOTOR1_PIN2, GPIO.HIGH)
         GPIO.output(self.MOTOR2_PIN1, GPIO.HIGH)
         GPIO.output(self.MOTOR2_PIN2, GPIO.LOW)
-        self.pwm1.ChangeDutyCycle(speed)
-        self.pwm2.ChangeDutyCycle(speed)
+        self.pwm1.ChangeDutyCycle(speed) # Reverted to use speed directly
+        self.pwm2.ChangeDutyCycle(speed) # Reverted to use speed directly
         self.current_speed = 0
 
     def turn_right(self, speed: float):
         """Turn right by running right motor backward and left motor forward"""
         speed = max(0, min(100, speed))
+        # effective_speed = 0 # Reverting
+        # if speed > 0: # Reverting
+        #     effective_speed = max(MIN_OPERATIONAL_PWM, speed) # Reverting
+            
         GPIO.output(self.MOTOR1_PIN1, GPIO.HIGH)
         GPIO.output(self.MOTOR1_PIN2, GPIO.LOW)
         GPIO.output(self.MOTOR2_PIN1, GPIO.LOW)
         GPIO.output(self.MOTOR2_PIN2, GPIO.HIGH)
-        self.pwm1.ChangeDutyCycle(speed)
-        self.pwm2.ChangeDutyCycle(speed)
+        self.pwm1.ChangeDutyCycle(speed) # Reverted to use speed directly
+        self.pwm2.ChangeDutyCycle(speed) # Reverted to use speed directly
         self.current_speed = 0 
