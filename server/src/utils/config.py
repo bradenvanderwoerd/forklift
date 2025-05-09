@@ -44,9 +44,9 @@ MOTOR_RIGHT_PWM_PIN = 24
 SERVO_PWM_PIN = 13
 
 # --- Forklift Servo Positions ---
-FORK_DOWN_POSITION = 80      # Default down position (startup, shutdown, manual down, auto-nav pickup)
+FORK_DOWN_POSITION = 85      # Default down position (startup, shutdown, manual down, auto-nav pickup)
 FORK_UP_POSITION = 0        # Default up position (manual up)
-AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE = 80 # Special low position for auto-nav to get under a box (same as FORK_DOWN_POSITION)
+AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE = 85 # Special low position for auto-nav to get under a box (same as FORK_DOWN_POSITION)
 AUTONAV_FORK_CARRY_ANGLE = 60 # Position for carrying a box during auto-navigation
 # SERVO_ABSOLUTE_MAX_ANGLE = 80 # Physical maximum for the servo controller
 
