@@ -76,7 +76,19 @@ class ServoController:
              self.pwm.ChangeDutyCycle(self._angle_to_duty_cycle(target_angle))
              self.current_position = target_angle
 
-        logger.info(f"Servo: Reached target position {self.current_position:.2f} degrees.")
+        # Allow servo to reach the position and then stop PWM signal to prevent jitter
+        # A small delay for the servo to physically complete the last move.
+        # self.step_delay_seconds is the delay between steps. A final settle time might be similar
+        # or slightly longer. If blocking, we assume the user wants to wait.
+        if blocking:
+            # Use a slightly longer delay for final settling if step_delay is very small,
+            # otherwise, the step_delay itself should be sufficient.
+            final_settle_delay = max(self.step_delay_seconds, 0.1) # Ensure at least 0.1s
+            time.sleep(final_settle_delay)
+        
+        self.pwm.ChangeDutyCycle(0) # Stop sending PWM signal pulses
+
+        logger.info(f"Servo: Reached target position {self.current_position:.2f} degrees. PWM signal stopped to prevent jitter.")
     
     def go_to_down_position(self, blocking: bool = True):
         """Move servo to the predefined FORK_DOWN_POSITION."""
