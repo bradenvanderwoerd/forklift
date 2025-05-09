@@ -12,6 +12,7 @@ import time
 from picamera2 import Picamera2
 from picamera2.encoders import JpegEncoder
 from picamera2.outputs import FileOutput
+import cv2.aruco as aruco
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,10 @@ class VideoStreamer:
         self.camera = None
         self.loop = None
         self.quality_controller = AdaptiveQualityController()
+        self.aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
+        self.aruco_params = aruco.DetectorParameters()
+        self.aruco_detector = aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
+        logger.info("ArUco detector initialized.")
         
     def _initialize_camera(self):
         """Initialize the camera"""
@@ -122,15 +127,27 @@ class VideoStreamer:
                     await asyncio.sleep(1)
                     continue
                 
-                frame = self.camera.capture_array()
-                if frame is None:
+                frame_color = self.camera.capture_array()
+                if frame_color is None:
                     logger.error("Failed to capture frame")
                     await asyncio.sleep(0.1)
                     continue
                 
-                frame = cv2.rotate(frame, cv2.ROTATE_180)
+                frame_color = cv2.rotate(frame_color, cv2.ROTATE_180)
+                
+                # --- ArUco Detection --- 
+                gray_frame = cv2.cvtColor(frame_color, cv2.COLOR_RGB2GRAY)
+                corners, ids, rejected = self.aruco_detector.detectMarkers(gray_frame)
+                
+                if ids is not None:
+                    frame_display = aruco.drawDetectedMarkers(frame_color.copy(), corners, ids)
+                    logger.debug(f"Detected ArUco IDs: {ids.flatten().tolist()}") 
+                else:
+                    frame_display = frame_color
+                # --- End ArUco Detection ---
+
                 quality = self.quality_controller.get_quality()
-                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+                _, buffer = cv2.imencode('.jpg', frame_display, [cv2.IMWRITE_JPEG_QUALITY, quality])
                 
                 await websocket.send(buffer.tobytes())
                 
