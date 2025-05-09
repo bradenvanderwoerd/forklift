@@ -26,8 +26,9 @@ class ServoController:
         initial_duty_cycle = self._angle_to_duty_cycle(self.current_position)
         self.pwm.start(initial_duty_cycle) 
         time.sleep(0.5) # Allow time for servo to reach initial position
-        self.pwm.stop() 
-        logger.info(f"ServoController initialized. Position set to: {self.current_position:.2f} degrees. PWM stopped.")
+        self.pwm.stop()
+        GPIO.output(self.pin, GPIO.LOW) # Explicitly set pin LOW
+        logger.info(f"ServoController initialized. Position set to: {self.current_position:.2f} degrees. PWM stopped, pin set LOW.")
 
     def _angle_to_duty_cycle(self, angle: float) -> float:
         """Converts an angle (0-180 nominally) to a PWM duty cycle (2.5-12.5 for SG90 type servos)."""
@@ -43,6 +44,7 @@ class ServoController:
         # Ensure previous PWM is stopped (belt-and-suspenders, should be stopped already)
         try:
             self.pwm.stop()
+            GPIO.output(self.pin, GPIO.LOW) # Ensure pin is low if pwm was running
         except Exception: # May occur if not started, or on first call if somehow uninitialized
             pass
 
@@ -66,7 +68,8 @@ class ServoController:
         # Stop PWM
         logger.info(f"Servo (Direct Mode Test): Stopping PWM after attempted move to {self.current_position:.2f}.")
         self.pwm.stop()
-        logger.info(f"Servo (Direct Mode Test): Move from {current_angle_for_log:.2f} to {self.current_position:.2f} complete. PWM stopped.")
+        GPIO.output(self.pin, GPIO.LOW) # Explicitly set pin LOW
+        logger.info(f"Servo (Direct Mode Test): Move from {current_angle_for_log:.2f} to {self.current_position:.2f} complete. PWM stopped, pin set LOW.")
     
     def go_to_down_position(self, blocking: bool = True):
         """Move servo to the predefined FORK_DOWN_POSITION."""
@@ -91,7 +94,8 @@ class ServoController:
         # Ensure PWM is stopped before cleaning up GPIO
         try:
             self.pwm.stop()
+            GPIO.output(self.pin, GPIO.LOW) # Explicitly set pin LOW
         except Exception: # pwm might not be initialized if __init__ failed
             pass 
         GPIO.cleanup([self.pin]) # Uncomment
-        logger.info("Servo: Cleanup called. PWM stopped and GPIO cleaned.") # Revert log 
+        logger.info("Servo: Cleanup called. PWM stopped, pin set LOW, and GPIO cleaned.") # Revert log 
