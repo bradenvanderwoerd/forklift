@@ -13,7 +13,7 @@ CALIBRATION_FILE = "../camera_calibration.npz" # Output file, relative path
 PATTERN_SIZE = (6, 8) # Internal corners: (cols-1, rows-1)
 SQUARE_LENGTH = 0.0204 # Square size in meters
 MARKER_LENGTH = 0.015 # ArUco marker size in meters
-ARUCO_DICT_NAME = aruco.DICT_7X7_50 # The dictionary used for markers ON the board
+ARUCO_DICT_NAME = aruco.DICT_7X7_250 # Changed back to 250 from 50, as a common default
 # -------------------
 
 def calibrate():
