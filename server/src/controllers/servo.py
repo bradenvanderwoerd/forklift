@@ -18,7 +18,7 @@ class ServoController:
         self.min_angle = FORK_DOWN_POSITION 
         self.max_angle = FORK_UP_POSITION  
         
-        self.pwm = GPIO.PWM(self.pin, 50) # 50 Hz PWM frequency
+        self.pwm = GPIO.PWM(self.pin, 60) # Changed frequency from 50Hz to 60Hz for testing
         initial_duty_cycle = self._angle_to_duty_cycle(self.current_position)
         self.pwm.start(initial_duty_cycle) # Start PWM at initial position
         # PWM is now left running. No sleep, stop, or pin LOW here.
