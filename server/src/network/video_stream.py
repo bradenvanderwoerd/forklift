@@ -83,6 +83,8 @@ class VideoStreamer:
         self.camera = None
         self.loop = None
         self.quality_controller = AdaptiveQualityController()
+        self.last_logged_primary_target_id = None
+        self.shared_primary_target_pose = None # For sharing latest primary target pose with ForkliftServer
         
         # Use ArUco settings from config
         self.aruco_dict = aruco.getPredefinedDictionary(config.ARUCO_DICTIONARY)
@@ -184,12 +186,15 @@ class VideoStreamer:
                                 tvec = tvecs[i]
                                 current_id = ids[i][0]
 
-                                # Identify the marker based on config
                                 marker_name = "Unknown"
+                                is_primary_target = False
+
                                 if current_id == config.MARKER_ID_WHITE_BOX:
                                     marker_name = "White Box"
+                                    is_primary_target = True
                                 elif current_id == config.MARKER_ID_BLACK_BOX:
                                     marker_name = "Black Box"
+                                    is_primary_target = True
                                 elif current_id == config.MARKER_ID_WHITE_BOX_DESTINATION:
                                     marker_name = "White Box Destination"
                                 elif current_id == config.MARKER_ID_BLACK_BOX_DESTINATION:
@@ -198,12 +203,21 @@ class VideoStreamer:
                                     marker_name = "Navigation Aid"
 
                                 if marker_name != "Unknown":
-                                    logger.info(f"Identified Target: {marker_name} (ID: {current_id}), tvec: {tvec.flatten().round(3)}, rvec: {rvec.flatten().round(3)}")
+                                    log_details = f"ID: {current_id}, tvec: {tvec.flatten().round(3)}, rvec: {rvec.flatten().round(3)}"
+                                    if is_primary_target:
+                                        if self.last_logged_primary_target_id != current_id:
+                                            logger.info(f"Primary Target Acquired: {marker_name} ({log_details})")
+                                            self.last_logged_primary_target_id = current_id
+                                            self.shared_primary_target_pose = (tvec, rvec) # Share pose
+                                        else:
+                                            logger.debug(f"Primary Target Still Visible: {marker_name} ({log_details})") # Log subsequent at DEBUG
+                                            # Keep shared_primary_target_pose as is, or update if desired for continuous tracking
+                                            self.shared_primary_target_pose = (tvec, rvec) # Update continuously while visible for ForkliftServer
+                                    else: # For non-primary but configured targets (destinations, nav aid)
+                                        logger.info(f"Auxiliary Target Visible: {marker_name} ({log_details})")
                                 else:
-                                    # Log other detected markers at DEBUG level if not a target
                                     logger.debug(f"Detected non-target ArUco ID: {current_id}, tvec: {tvec.flatten().round(3)}, rvec: {rvec.flatten().round(3)}")
                                 
-                                # Draw axes for each marker
                                 cv2.drawFrameAxes(frame_display, 
                                                   self.camera_matrix, 
                                                   self.dist_coeffs, 
@@ -221,6 +235,12 @@ class VideoStreamer:
                 else:
                     frame_display = frame_color
                 # --- End ArUco Detection & Pose Estimation ---
+
+                # Reset last_logged_primary_target_id if no markers are seen in this frame
+                if ids is None and self.last_logged_primary_target_id is not None:
+                    logger.info(f"Primary Target (ID: {self.last_logged_primary_target_id}) Lost.")
+                    self.last_logged_primary_target_id = None
+                    self.shared_primary_target_pose = None # Clear shared pose when lost
 
                 quality = self.quality_controller.get_quality()
                 _, buffer = cv2.imencode('.jpg', frame_display, [cv2.IMWRITE_JPEG_QUALITY, quality])

@@ -53,4 +53,31 @@ MAX_STEERING = 100   # From old config.py (Note: steering logic might not use th
 
 # --- Logging Configuration ---
 LOG_LEVEL = "INFO"
+LOG_FILE = "server.log"
+
+# --- Navigation Controller Configuration ---
+NAV_TARGET_APPROACH_DISTANCE_M = 0.15  # Target distance from marker (15cm)
+NAV_DISTANCE_THRESHOLD_M = 0.03      # Tolerance for being "at distance" (3cm)
+NAV_X_THRESHOLD_M = 0.02             # Tolerance for being "centered" on X (2cm)
+
+# PID Gains for Turning (correcting X-offset from tvec)
+NAV_TURNING_PID_KP = 250.0 # Proportional gain (higher means stronger reaction to X-offset)
+NAV_TURNING_PID_KI = 5.0   # Integral gain (accumulates error over time)
+NAV_TURNING_PID_KD = 10.0  # Derivative gain (dampens overshoot)
+
+# PID Gains for Distance (correcting Z-offset from tvec)
+NAV_DISTANCE_PID_KP = 150.0 # Proportional gain (higher means faster approach)
+NAV_DISTANCE_PID_KI = 2.0   # Integral gain
+NAV_DISTANCE_PID_KD = 5.0  # Derivative gain
+
+NAV_MAX_TURNING_SPEED = 40       # Max speed for turning actions (0-100 for motor controller)
+NAV_MAX_FORWARD_SPEED = 50       # Max speed for forward/backward actions (0-100)
+NAV_MIN_EFFECTIVE_SPEED = 25     # Minimum speed to ensure motors engage if PID output is too low but error exists
+
+# --- Servo Control Configuration ---
+SERVO_STEP_DEGREES = 1          # Degrees to move the servo per step for smooth movement
+SERVO_STEP_DELAY_SECONDS = 0.015 # Delay between each step (controls speed)
+
+# --- Logging Configuration ---
+LOG_LEVEL = "INFO"
 LOG_FILE = "server.log" 

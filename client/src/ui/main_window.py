@@ -1,10 +1,13 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QPushButton, QLabel, QSlider, QGridLayout)
+                             QPushButton, QLabel, QSlider, QGridLayout, QSizePolicy)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QImage, QPixmap, QKeyEvent
 import cv2
 import numpy as np
 from src.network.client import RobotClient
+import logging
+
+logger = logging.getLogger(__name__)
 
 class KeyDisplay(QLabel):
     def __init__(self, key_text, width=35, height=35):
@@ -125,6 +128,12 @@ class MainWindow(QMainWindow):
         self.connect_button.clicked.connect(self.toggle_connection)
         button_layout.addWidget(self.connect_button)
         
+        # Auto-Nav Toggle Button
+        self.autonav_button = QPushButton("Start Auto-Nav")
+        self.autonav_button.clicked.connect(self.toggle_autonav)
+        self.autonav_button.setEnabled(False) # Disabled until connected
+        button_layout.addWidget(self.autonav_button)
+        
         self.emergency_button = QPushButton("Emergency Stop")
         self.emergency_button.setStyleSheet("background-color: red; color: white;")
         self.emergency_button.clicked.connect(self.emergency_stop)
@@ -139,12 +148,25 @@ class MainWindow(QMainWindow):
         
         self.is_connected = False
         self.current_speed = 50
+        self.is_autonav_active = False # Client-side state for auto-navigation
         
     def keyPressEvent(self, event: QKeyEvent):
         if not self.is_connected:
             return
             
         key = event.key()
+
+        # Emergency stop via Spacebar always active
+        if key == Qt.Key.Key_Space:
+            self.space_key.set_active(True)
+            self.emergency_stop() # Call the enhanced emergency_stop method
+            return # Do not process other keys if space is pressed
+
+        if self.is_autonav_active: # If auto-nav is active, ignore other movement/servo keys
+            # We might want to allow some keys even in autonav, e.g., a different way to stop autonav
+            # For now, all movement keys are suppressed.
+            return
+            
         if key == Qt.Key.Key_W:
             self.w_key.set_active(True)
             self.robot_client.send_command("drive", {"direction": "FORWARD", "speed": self.current_speed})
@@ -157,9 +179,6 @@ class MainWindow(QMainWindow):
         elif key == Qt.Key.Key_D:
             self.d_key.set_active(True)
             self.robot_client.send_command("drive", {"direction": "RIGHT", "speed": self.current_speed})
-        elif key == Qt.Key.Key_Space:
-            self.space_key.set_active(True)
-            self.emergency_stop()
         elif key == Qt.Key.Key_Up:
             self.up_arrow_key.set_active(True)
             self.robot_client.send_command("servo", {"step_down": True})
@@ -188,18 +207,53 @@ class MainWindow(QMainWindow):
         if not self.is_connected:
             self.robot_client.connect()
             self.connect_button.setText("Disconnect")
+            self.autonav_button.setEnabled(True) # Enable autonav button on connect
             self.is_connected = True
         else:
+            # If auto-nav is active when disconnecting, turn it off on client and server
+            if self.is_autonav_active:
+                self.toggle_autonav() # This will send command and update client state
             self.robot_client.disconnect()
             self.connect_button.setText("Connect")
+            self.autonav_button.setEnabled(False) # Disable autonav button on disconnect
             self.is_connected = False
             
     def emergency_stop(self):
+        logger.info("CLIENT: Emergency Stop triggered!") # Add client-side log
         self.robot_client.send_command("stop")
+        if self.is_autonav_active:
+            # We don't send another TOGGLE_AUTONAV here because the server-side e-stop
+            # should already be deactivating auto-nav. We just update client state.
+            self.is_autonav_active = False
+            self.autonav_button.setText("Start Auto-Nav")
+            self.autonav_button.setStyleSheet("") # Reset style
+            logger.info("CLIENT: Auto-Nav deactivated due to Emergency Stop.")
+            # Potentially re-enable manual controls if they were disabled by autonav state
+            # This is implicitly handled as keyPressEvent will no longer be blocked by self.is_autonav_active
+        # Potentially re-enable manual controls if they were disabled by autonav state
+        # This is implicitly handled as keyPressEvent will no longer be blocked by self.is_autonav_active
         
+    def toggle_autonav(self):
+        if not self.is_connected:
+            return
+
+        self.robot_client.send_command("TOGGLE_AUTONAV")
+        self.is_autonav_active = not self.is_autonav_active
+        
+        if self.is_autonav_active:
+            self.autonav_button.setText("Stop Auto-Nav")
+            self.autonav_button.setStyleSheet("background-color: #FFA500; color: white;") # Orange for active
+            logger.info("CLIENT: Auto-Nav ACTIVATED.")
+            # Manual controls (WASD, arrows, speed slider) will be suppressed by self.is_autonav_active flag
+        else:
+            self.autonav_button.setText("Start Auto-Nav")
+            self.autonav_button.setStyleSheet("") # Reset style
+            logger.info("CLIENT: Auto-Nav DEACTIVATED.")
+            # Manual controls are now re-enabled implicitly
+
     def on_speed_change(self, value):
         self.current_speed = value
-        if self.is_connected:
+        if self.is_connected and not self.is_autonav_active: # Only send if connected and not in auto-nav
             self.robot_client.send_command("set_speed", value)
             
     def update_video(self):

@@ -10,6 +10,7 @@ import RPi.GPIO as GPIO
 
 from .controllers.motor import MotorController
 from .controllers.servo import ServoController
+from .controllers.navigation import NavigationController
 from .network.video_stream import VideoStreamer
 from .network.tcp_server import CommandServer
 from .utils.config import HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, SERVO_PWM_PIN
@@ -39,6 +40,7 @@ class ForkliftServer:
         self.running = True
         self.cleanup_lock = threading.Lock()
         self.cleanup_complete = threading.Event()
+        self.test_autonav_active = False # Flag for testing autonomous navigation
         
         # Check port availability using new config variable names
         if not check_port_availability(SERVER_TCP_PORT):
@@ -51,7 +53,9 @@ class ForkliftServer:
         # Initialize hardware controllers
         self.motor_controller = MotorController()
         self.servo_controller = ServoController()
-        self.servo_controller.set_position(0)  # Set servo to 0 on startup
+        self.navigation_controller = NavigationController(self.motor_controller)
+        
+        self.servo_controller.set_position(0)  # Set servo to 0 on startup using smooth movement
         
         # Initialize network components, passing configured host and ports
         self.video_streamer = VideoStreamer(host=HOST, port=SERVER_VIDEO_UDP_PORT)
@@ -74,8 +78,12 @@ class ForkliftServer:
         self.command_server.register_handler('motor', self._handle_motor_command)
         self.command_server.register_handler('servo', self._handle_servo_command)
         self.command_server.register_handler('stop', self._handle_emergency_stop)
+        self.command_server.register_handler('TOGGLE_AUTONAV', self._handle_toggle_autonav_command)
     
     def _handle_drive_command(self, data: Dict[str, Any]):
+        if self.test_autonav_active:
+            logger.info("Auto-nav active, drive command ignored.")
+            return
         logger.info("--- _handle_drive_command ENTERED ---")
         logger.info(f"Received DRIVE command data: {data}")
 
@@ -109,6 +117,9 @@ class ForkliftServer:
             self.motor_controller.stop()
     
     def _handle_motor_command(self, data: Dict[str, Any]):
+        if self.test_autonav_active:
+            logger.info("Auto-nav active, motor command ignored.")
+            return
         logger.info(f"Received MOTOR command: {data}")
         speed = data.get('speed', 0)
         self.motor_controller.set_speed(speed)
@@ -140,9 +151,32 @@ class ForkliftServer:
     
     def _handle_emergency_stop(self, data: Dict[str, Any]):
         """Handle emergency stop command"""
-        logger.info(f"--- _handle_emergency_stop ENTERED --- Data: {data}")
-        self.motor_controller.stop()
-        # self.servo_controller.set_position(0) # Removed servo reset from general stop command
+        logger.info(f"--- EMERGENCY STOP RECEIVED --- Data: {data}")
+        
+        # Deactivate auto-navigation if it was active
+        if self.test_autonav_active:
+            self.test_autonav_active = False
+            logger.info("Emergency stop: Autonomous navigation DEACTIVATED.")
+        
+        # Stop navigation controller
+        if hasattr(self, 'navigation_controller') and self.navigation_controller:
+            self.navigation_controller.clear_target() # Stops motors and clears nav target
+        else:
+            # Fallback if navigation_controller somehow not present, directly stop motors
+            self.motor_controller.stop()
+        
+        # self.servo_controller.set_position(0) # Optional: reset servo on e-stop. Current plan doesn't specify this.
+        logger.info("Emergency stop: All motor activity should cease.")
+    
+    def _handle_toggle_autonav_command(self, data: Dict[str, Any]):
+        """Handles the command to toggle autonomous navigation test mode."""
+        self.test_autonav_active = not self.test_autonav_active
+        logger.info(f"Autonomous navigation test mode {'ACTIVATED' if self.test_autonav_active else 'DEACTIVATED'}.")
+        if not self.test_autonav_active:
+            # Ensure motors stop and navigation target is cleared when deactivating
+            if hasattr(self, 'navigation_controller') and self.navigation_controller:
+                self.navigation_controller.clear_target()
+            # self.motor_controller.stop() # clear_target() in nav controller should handle this
     
     def _run_video_server(self):
         """Run video server in a separate thread"""
@@ -179,8 +213,30 @@ class ForkliftServer:
             self.video_thread.start()
             self.command_thread.start()
             
+            logger.info("ForkliftServer main loop started. Use TOGGLE_AUTONAV command to test navigation.")
+
             while self.running:
-                time.sleep(0.1)
+                if self.test_autonav_active:
+                    current_pose = self.video_streamer.shared_primary_target_pose
+                    if current_pose:
+                        tvec, rvec = current_pose
+                        # Check if the target has changed significantly to avoid rapid resetting of PIDs for the same marker
+                        # For now, we set it every time a pose is available; PID reset is handled in set_target if new.
+                        # A more sophisticated check could compare current_pose with navigation_controller.current_target_pose
+                        self.navigation_controller.set_target(tvec, rvec)
+                        self.navigation_controller.navigate()
+                    else:
+                        # No primary target visible, clear navigation target
+                        if self.navigation_controller.current_target_pose is not None:
+                             logger.info("Test AutoNav: Primary target lost from view, clearing navigation.")
+                             self.navigation_controller.clear_target()
+                else:
+                    # If auto-navigation was just turned off, ensure motors are stopped
+                    # The toggle handler already calls clear_target, but this is a safeguard.
+                    # We might have stopped auto_nav for other reasons in a full state machine.
+                    pass # Handled by _handle_toggle_autonav_command when switched off
+
+                time.sleep(0.05) # Loop a bit faster for responsive navigation updates
                 
         except KeyboardInterrupt:
             logger.info("\nKeyboard interrupt (Ctrl+C) received. Initiating shutdown...")
