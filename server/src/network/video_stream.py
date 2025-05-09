@@ -13,6 +13,8 @@ from picamera2 import Picamera2
 from picamera2.encoders import JpegEncoder
 from picamera2.outputs import FileOutput
 import cv2.aruco as aruco
+import os
+from ..utils import config # Added import for config
 
 logger = logging.getLogger(__name__)
 
@@ -81,10 +83,32 @@ class VideoStreamer:
         self.camera = None
         self.loop = None
         self.quality_controller = AdaptiveQualityController()
-        self.aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_7X7_50)
-        self.aruco_params = aruco.DetectorParameters()
+        
+        # Use ArUco settings from config
+        self.aruco_dict = aruco.getPredefinedDictionary(config.ARUCO_DICTIONARY)
+        self.aruco_params = aruco.DetectorParameters() # Consider making aruco_params configurable if needed
         self.aruco_detector = aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
-        logger.info("ArUco detector initialized with DICT_7X7_50.")
+        logger.info(f"ArUco detector initialized with dictionary ID: {config.ARUCO_DICTIONARY}.")
+
+        # Load camera calibration data from config path
+        self.camera_matrix = None
+        self.dist_coeffs = None
+        calibration_file_path = config.CAMERA_CALIBRATION_FILE_PATH
+        
+        try:
+            with np.load(calibration_file_path) as data:
+                self.camera_matrix = data['mtx']
+                self.dist_coeffs = data['dist']
+                logger.info(f"Successfully loaded camera calibration data from {calibration_file_path}")
+                # print("Camera Matrix (mtx):\n", self.camera_matrix) # For debugging
+                # print("Distortion Coefficients (dist):\n", self.dist_coeffs) # For debugging
+        except FileNotFoundError:
+            logger.warning(f"Camera calibration file not found at {calibration_file_path}. Pose estimation will be disabled.")
+        except Exception as e:
+            logger.error(f"Error loading camera calibration data from {calibration_file_path}: {e}")
+
+        # Use marker size from config
+        self.marker_actual_size_m = config.ARUCO_MARKER_SIZE_METERS
         
     def _initialize_camera(self):
         """Initialize the camera"""
@@ -142,9 +166,43 @@ class VideoStreamer:
                 if ids is not None:
                     frame_display = aruco.drawDetectedMarkers(frame_color.copy(), corners, ids)
                     logger.debug(f"Detected ArUco IDs: {ids.flatten().tolist()}") 
+
+                    # --- Pose Estimation and Visualization ---
+                    if self.camera_matrix is not None and self.dist_coeffs is not None:
+                        try:
+                            # Estimate pose for each detected marker
+                            # rvecs, tvecs are arrays of rotation and translation vectors for each marker
+                            rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(
+                                corners, 
+                                self.marker_actual_size_m, 
+                                self.camera_matrix, 
+                                self.dist_coeffs
+                            )
+
+                            # Draw axes for each marker
+                            for i in range(len(ids)):
+                                rvec = rvecs[i]
+                                tvec = tvecs[i]
+                                cv2.drawFrameAxes(frame_display, 
+                                                  self.camera_matrix, 
+                                                  self.dist_coeffs, 
+                                                  rvec, tvec, 
+                                                  self.marker_actual_size_m * 0.5) # Length of axis
+                                
+                                # You can log or use rvec/tvec here for navigation later
+                                # logger.debug(f"Marker ID: {ids[i][0]}, tvec: {tvec.flatten()}, rvec: {rvec.flatten()}")
+
+                        except cv2.error as e:
+                            logger.error(f"OpenCV error during pose estimation or drawing: {e}")
+                        except Exception as e:
+                            logger.error(f"Unexpected error during pose estimation or drawing: {e}")
+                    else:
+                        if not hasattr(self, '_warned_missing_calib_for_pose'):
+                            logger.warning("Camera calibration data not available. Skipping pose estimation and axis drawing.")
+                            self._warned_missing_calib_for_pose = True # Warn only once
                 else:
                     frame_display = frame_color
-                # --- End ArUco Detection ---
+                # --- End ArUco Detection & Pose Estimation ---
 
                 quality = self.quality_controller.get_quality()
                 _, buffer = cv2.imencode('.jpg', frame_display, [cv2.IMWRITE_JPEG_QUALITY, quality])

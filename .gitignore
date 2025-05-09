@@ -42,4 +42,5 @@ Thumbs.db
 
 # Project specific
 *.log
-*.pid 
+*.pid
+server/src/camera_calibration.npz 
