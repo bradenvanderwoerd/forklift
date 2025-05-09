@@ -158,18 +158,23 @@ class NavigationController:
         # --- Convert PID efforts to motor commands ---
         # Clamp PID outputs to a manageable range before scaling to motor speeds
         # These clamps are somewhat arbitrary and might need tuning based on typical PID output values
-        clamped_turning_effort = max(-1.0, min(1.0, turning_effort / 100.0)) # Normalize somewhat
+        # clamped_turning_effort = max(-1.0, min(1.0, turning_effort / 100.0)) # Normalize somewhat
         clamped_distance_effort = max(-1.0, min(1.0, distance_effort / 100.0)) # Normalize somewhat
 
         # Determine motor speeds
-        turn_speed = clamped_turning_effort * self.max_turning_speed
+        # TEMP: Direct scaling for turn_speed to test kp effect
+        raw_turn_speed = turning_effort * 0.1 # Example scaling, adjust as needed, can be Kp dependent too
+        turn_speed = max(-self.max_turning_speed, min(self.max_turning_speed, raw_turn_speed))
+        # turn_speed = clamped_turning_effort * self.max_turning_speed # Original line
+        
         forward_speed = -clamped_distance_effort * self.max_forward_speed # Negative because negative effort means move forward
         
         # Apply a minimum effective speed if the computed speed is too low but there's error
         if 0 < abs(forward_speed) < self.min_effective_speed and not self.is_at_distance(current_distance_cam):
             forward_speed = self.min_effective_speed * (1 if forward_speed > 0 else -1)
-        if 0 < abs(turn_speed) < self.min_effective_speed and not self.is_centered(target_x_cam):
-             turn_speed = self.min_effective_speed * (1 if turn_speed > 0 else -1)
+        # TEMP: Comment out min_effective_speed for turning to isolate kp
+        # if 0 < abs(turn_speed) < self.min_effective_speed and not self.is_centered(target_x_cam):
+        #      turn_speed = self.min_effective_speed * (1 if turn_speed > 0 else -1)
 
         # Simple control logic: Prioritize turning if not centered, then drive.
         # This can be made more sophisticated (e.g., combined turning and driving).
