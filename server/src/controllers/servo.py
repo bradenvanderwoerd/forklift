@@ -119,6 +119,10 @@ class ServoController:
         logger.info("Servo: Moving to FORK_UP_POSITION.") # Will target 0
         self.set_position(FORK_UP_POSITION, blocking=blocking)
 
+    def go_to_autonav_carry_position(self, blocking: bool = True):
+        logger.info(f"Servo: Moving to AUTONAV_FORK_CARRY_ANGLE ({AUTONAV_FORK_CARRY_ANGLE} deg).")
+        self.set_position(AUTONAV_FORK_CARRY_ANGLE, blocking=blocking)
+
     def get_position(self) -> float:
         return self.current_position_degrees
     

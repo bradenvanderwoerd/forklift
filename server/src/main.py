@@ -15,8 +15,8 @@ from .network.video_stream import VideoStreamer
 from .network.tcp_server import CommandServer
 from .utils.config import (
     HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, 
-    SERVO_PWM_PIN, MANUAL_TURN_SPEED, FORK_DOWN_POSITION, FORK_UP_POSITION
-    # AUTONAV_FORK_CARRY_ANGLE is not directly used in main.py for manual control yet
+    SERVO_PWM_PIN, MANUAL_TURN_SPEED, FORK_DOWN_POSITION, FORK_UP_POSITION,
+    AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, AUTONAV_FORK_CARRY_ANGLE
 )
 
 # Set up logging
@@ -25,6 +25,13 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Auto-navigation Stages
+AUTONAV_STAGE_IDLE = "IDLE"
+AUTONAV_STAGE_NAVIGATING = "NAVIGATING"
+AUTONAV_STAGE_LOWERING_FORKS = "LOWERING_FORKS"
+AUTONAV_STAGE_LIFTING_FORKS = "LIFTING_FORKS"
+# AUTONAV_STAGE_CARRYING_BOX = "CARRYING_BOX" # Future state if needed
 
 def check_port_availability(port: int) -> bool:
     """Check if a port is available for use."""
@@ -45,6 +52,7 @@ class ForkliftServer:
         self.cleanup_lock = threading.Lock()
         self.cleanup_complete = threading.Event()
         self.test_autonav_active = False # Flag for testing autonomous navigation
+        self.autonav_stage = AUTONAV_STAGE_IDLE # Current stage of auto-navigation
         
         # Check port availability using new config variable names
         if not check_port_availability(SERVER_TCP_PORT):
@@ -163,6 +171,7 @@ class ForkliftServer:
         # Deactivate auto-navigation if it was active
         if self.test_autonav_active:
             self.test_autonav_active = False
+            self.autonav_stage = AUTONAV_STAGE_IDLE # Reset stage
             logger.info("Emergency stop: Autonomous navigation DEACTIVATED.")
         
         # Stop navigation controller
@@ -178,12 +187,19 @@ class ForkliftServer:
     def _handle_toggle_autonav_command(self, data: Dict[str, Any]):
         """Handles the command to toggle autonomous navigation test mode."""
         self.test_autonav_active = not self.test_autonav_active
-        logger.info(f"Autonomous navigation test mode {'ACTIVATED' if self.test_autonav_active else 'DEACTIVATED'}.")
-        if not self.test_autonav_active:
-            # Ensure motors stop and navigation target is cleared when deactivating
+        if self.test_autonav_active:
+            self.autonav_stage = AUTONAV_STAGE_NAVIGATING
+            logger.info(f"Autonomous navigation test mode ACTIVATED. Stage: {self.autonav_stage}")
+            # Ensure servo is in a known state if needed, e.g., up or carry.
+            # For now, we assume it starts appropriately or the first action will set it.
+        else:
+            self.autonav_stage = AUTONAV_STAGE_IDLE
+            logger.info(f"Autonomous navigation test mode DEACTIVATED. Stage: {self.autonav_stage}")
             if hasattr(self, 'navigation_controller') and self.navigation_controller:
-                self.navigation_controller.clear_target()
-            # self.motor_controller.stop() # clear_target() in nav controller should handle this
+                self.navigation_controller.clear_target() # Stops motors
+            # Optionally, reset servo to a default position, e.g., down
+            logger.info("Setting servo to FORK_DOWN_POSITION on auto-nav deactivation.")
+            self.servo_controller.set_position(FORK_DOWN_POSITION) 
     
     def _handle_set_nav_turning_pid(self, data: Dict[str, Any]):
         """Handles command to set turning PID gains for NavigationController."""
@@ -257,24 +273,49 @@ class ForkliftServer:
             while self.running:
                 if self.test_autonav_active:
                     current_pose = self.video_streamer.shared_primary_target_pose
-                    if current_pose:
-                        tvec, rvec = current_pose
-                        # Check if the target has changed significantly to avoid rapid resetting of PIDs for the same marker
-                        # For now, we set it every time a pose is available; PID reset is handled in set_target if new.
-                        # A more sophisticated check could compare current_pose with navigation_controller.current_target_pose
-                        self.navigation_controller.set_target(tvec, rvec)
-                        self.navigation_controller.navigate()
-                    else:
-                        # No primary target visible, clear navigation target
-                        if self.navigation_controller.current_target_pose is not None:
-                             logger.info("Test AutoNav: Primary target lost from view, clearing navigation.")
-                             self.navigation_controller.clear_target()
-                else:
-                    # If auto-navigation was just turned off, ensure motors are stopped
-                    # The toggle handler already calls clear_target, but this is a safeguard.
-                    # We might have stopped auto_nav for other reasons in a full state machine.
-                    pass # Handled by _handle_toggle_autonav_command when switched off
+                    
+                    if self.autonav_stage == AUTONAV_STAGE_NAVIGATING:
+                        if current_pose:
+                            tvec, rvec = current_pose
+                            self.navigation_controller.set_target(tvec, rvec) # Keep setting target
+                            nav_active = self.navigation_controller.navigate() # navigate() returns true if actively moving
 
+                            # is_at_target needs the raw tvec values from current_pose
+                            if self.navigation_controller.is_at_target(tvec[0][0], tvec[0][2]):
+                                logger.info("AutoNav: Target Reached! Stage: NAVIGATING -> LOWERING_FORKS")
+                                self.navigation_controller.clear_target() # Stop motors before servo action
+                                self.autonav_stage = AUTONAV_STAGE_LOWERING_FORKS
+                        else:
+                            # No primary target visible, clear navigation target if it was set
+                            if self.navigation_controller.current_target_pose is not None:
+                                 logger.info("Test AutoNav: Primary target lost from view, clearing navigation.")
+                                 self.navigation_controller.clear_target()
+                                 
+                    elif self.autonav_stage == AUTONAV_STAGE_LOWERING_FORKS:
+                        logger.info(f"AutoNav: Stage LOWERING_FORKS. Lowering forks to {AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE} deg.")
+                        self.servo_controller.set_position(AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, blocking=True)
+                        logger.info("AutoNav: Forks lowered. Simulating pickup (delay 1s). Stage: LOWERING_FORKS -> LIFTING_FORKS")
+                        time.sleep(1.0) # Simulate pickup time
+                        self.autonav_stage = AUTONAV_STAGE_LIFTING_FORKS
+                        
+                    elif self.autonav_stage == AUTONAV_STAGE_LIFTING_FORKS:
+                        logger.info(f"AutoNav: Stage LIFTING_FORKS. Lifting forks to {AUTONAV_FORK_CARRY_ANGLE} deg.")
+                        self.servo_controller.go_to_autonav_carry_position(blocking=True)
+                        logger.info("AutoNav: Forks lifted to carry position. Sequence complete for this target. Stage: LIFTING_FORKS -> IDLE")
+                        self.autonav_stage = AUTONAV_STAGE_IDLE 
+                        # self.test_autonav_active = False # Optionally turn off autonav after one sequence
+                        # Or, wait for new command / new target detection to restart NAVIGATING stage.
+                        # For now, it will stay in IDLE but autonav is still "active" from toggle.
+                        # A new target detection won't re-trigger NAVIGATING unless stage is reset.
+                        # To re-run, user would toggle autonav off and on.
+                else:
+                    # Auto-navigation is not active
+                    # Ensure motors are stopped if autonav_stage was somehow not IDLE
+                    if self.autonav_stage != AUTONAV_STAGE_IDLE:
+                        logger.warning(f"Autonav not active, but stage was {self.autonav_stage}. Resetting to IDLE.")
+                        self.navigation_controller.clear_target()
+                        self.autonav_stage = AUTONAV_STAGE_IDLE
+                        
                 time.sleep(0.05) # Loop a bit faster for responsive navigation updates
                 
         except KeyboardInterrupt:
