@@ -55,7 +55,7 @@ class ForkliftServer:
         self.servo_controller = ServoController()
         self.navigation_controller = NavigationController(self.motor_controller)
         
-        self.servo_controller.set_position(0)  # Set servo to 0 on startup using smooth movement
+        self.servo_controller.set_position(45)  # Set servo to 45 on startup for testing
         
         # Initialize network components, passing configured host and ports
         self.video_streamer = VideoStreamer(host=HOST, port=SERVER_VIDEO_UDP_PORT)

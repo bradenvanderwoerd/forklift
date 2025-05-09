@@ -10,7 +10,7 @@ class ServoController:
     def __init__(self):
         GPIO.setup(SERVO_PWM_PIN, GPIO.OUT) # Uncomment
         self.pin = SERVO_PWM_PIN
-        self.current_position = 0 # Assume starts at 0, or read actual initial position if possible
+        self.current_position = 45 # Changed initial position from 0 to 45 for testing
         # self.target_position = 0 # Not strictly needed if set_position manages targets
         
         # Servo movement parameters from config
@@ -24,6 +24,7 @@ class ServoController:
         self.pwm = GPIO.PWM(self.pin, 50)  # Uncomment 
         # Initialize to starting position, then stop PWM to prevent initial jitter
         initial_duty_cycle = self._angle_to_duty_cycle(self.current_position)
+        logger.info(f"ServoController: Initializing to {self.current_position:.2f} degrees.")
         self.pwm.start(initial_duty_cycle) 
         time.sleep(0.5) # Allow time for servo to reach initial position
         self.pwm.stop()
