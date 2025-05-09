@@ -13,14 +13,23 @@ CALIBRATION_FILE = "../camera_calibration.npz" # Output file, relative path
 PATTERN_SIZE = (6, 8) # Internal corners: (cols-1, rows-1)
 SQUARE_LENGTH = 0.0204 # Square size in meters
 MARKER_LENGTH = 0.015 # ArUco marker size in meters
-ARUCO_DICT_NAME = aruco.DICT_7X7_100 # Trying 100 unique markers
+ARUCO_DICT_NAME = aruco.DICT_7X7_1000 # Trying 1000 unique markers
 # -------------------
 
 def calibrate():
     print("Starting ChArUco calibration...")
     # Define ArUco dictionary and parameters
     aruco_dict = aruco.getPredefinedDictionary(ARUCO_DICT_NAME)
+    
+    # Updated DetectorParameters
     params = aruco.DetectorParameters()
+    params.cornerRefinementMethod = aruco.CORNER_REFINE_SUBPIX # More accurate corner detection
+    # You can experiment with other params here if needed:
+    # params.adaptiveThreshConstant = 7
+    # params.adaptiveThreshWinSizeMin = 3
+    # params.adaptiveThreshWinSizeMax = 23
+    # params.adaptiveThreshWinSizeStep = 10
+    
     aruco_detector = aruco.ArucoDetector(aruco_dict, params)
 
     # Create ChArUco board object
