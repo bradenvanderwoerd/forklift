@@ -152,11 +152,13 @@ class RobotClient:
                 logger.error(f"Error during video task cancellation/await: {e}")
         self.video_receive_task = None
 
-        # Close websockets
+        # Close websockets - Remove .open check, just try to close if ws exists
         tasks = []
-        if self.command_ws and self.command_ws.open:
+        if self.command_ws:
+            # Attempt close even if state is unknown; close() should handle it
             tasks.append(asyncio.wait_for(self.command_ws.close(), timeout=2.0))
-        if self.video_ws and self.video_ws.open:
+        if self.video_ws:
+            # Attempt close even if state is unknown; close() should handle it
             tasks.append(asyncio.wait_for(self.video_ws.close(), timeout=2.0))
         
         if tasks:
@@ -164,10 +166,15 @@ class RobotClient:
             for i, result in enumerate(results):
                 if isinstance(result, asyncio.TimeoutError):
                     logger.warning(f"Timeout closing websocket {i+1}.")
+                elif isinstance(result, websockets.exceptions.ConnectionClosedOK):
+                     logger.info(f"Websocket {i+1} closed normally (ClosedOK).")
+                elif isinstance(result, websockets.exceptions.ConnectionClosedError):
+                     logger.warning(f"Websocket {i+1} closed with error: {result}")
                 elif isinstance(result, Exception):
-                    logger.error(f"Error closing websocket {i+1}: {result}")
+                    # Catch other potential exceptions during close
+                    logger.error(f"Error closing websocket {i+1}: {result.__class__.__name__}: {result}")
                 else:
-                    logger.info(f"Websocket {i+1} closed gracefully.")
+                    logger.info(f"Websocket {i+1} close operation completed.")
         
         self.command_ws = None
         self.video_ws = None
@@ -188,11 +195,15 @@ class RobotClient:
         try:
             while self.is_connected and not (self._stop_event and self._stop_event.is_set()):
                 try:
-                    if not self.video_ws or not self.video_ws.open:
-                        logger.warning("Video websocket not available or closed, stopping video reception.")
+                    # Simplified check: ensure ws exists; let recv handle closed state
+                    if not self.video_ws:
+                        logger.warning("Video websocket is None, stopping video reception.")
                         break
+                        
                     # Use wait_for to add a timeout, making it responsive to cancellation
+                    # recv() will raise ConnectionClosed if the socket is not open.
                     data = await asyncio.wait_for(self.video_ws.recv(), timeout=1.0)
+                    
                     nparr = np.frombuffer(data, np.uint8)
                     frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                     if frame is not None:
@@ -206,11 +217,11 @@ class RobotClient:
                 except asyncio.TimeoutError: # Timeout on recv is normal, just continue loop check
                     continue 
                 except websockets.exceptions.ConnectionClosed:
-                    logger.warning("Video connection closed by server.")
+                    logger.warning("Video connection closed during recv.") # Clarified log
                     break
                 except Exception as e:
                     logger.error(f"Video receive error: {e}", exc_info=True)
-                    break
+                    break # Exit loop on other errors
         except asyncio.CancelledError:
             logger.info("Video receive task explicitly cancelled.")
         finally:
