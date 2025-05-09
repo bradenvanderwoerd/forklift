@@ -1,7 +1,8 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QPushButton, QLabel, QSlider, QGridLayout, QSizePolicy)
+                             QPushButton, QLabel, QSlider, QGridLayout, QSizePolicy,
+                             QFormLayout, QGroupBox, QLineEdit)
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QImage, QPixmap, QKeyEvent
+from PyQt6.QtGui import QImage, QPixmap, QKeyEvent, QDoubleValidator
 import cv2
 import numpy as np
 from src.network.client import RobotClient
@@ -122,6 +123,35 @@ class MainWindow(QMainWindow):
         key_grid_outer_layout.addStretch(1)
         control_layout.addLayout(key_grid_outer_layout)
         
+        # PID Tuning UI Section
+        self.pid_tuning_group = QGroupBox("PID Tuning")
+        pid_tuning_layout = QFormLayout(self.pid_tuning_group)
+        pid_tuning_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+
+        self.turning_pid_inputs = {}
+        for param in ["Kp", "Ki", "Kd"]:
+            self.turning_pid_inputs[param] = QLineEdit()
+            self.turning_pid_inputs[param].setValidator(QDoubleValidator(0, 10000.0, 3))
+            pid_tuning_layout.addRow(f"Turn {param}:", self.turning_pid_inputs[param])
+        
+        self.apply_turning_pid_button = QPushButton("Apply Turning PID")
+        self.apply_turning_pid_button.clicked.connect(self.apply_turning_pid_settings)
+        pid_tuning_layout.addRow(self.apply_turning_pid_button)
+
+        self.distance_pid_inputs = {}
+        for param in ["Kp", "Ki", "Kd"]:
+            self.distance_pid_inputs[param] = QLineEdit()
+            self.distance_pid_inputs[param].setValidator(QDoubleValidator(0, 10000.0, 3))
+            pid_tuning_layout.addRow(f"Dist {param}:", self.distance_pid_inputs[param])
+
+        self.apply_distance_pid_button = QPushButton("Apply Distance PID")
+        self.apply_distance_pid_button.clicked.connect(self.apply_distance_pid_settings)
+        pid_tuning_layout.addRow(self.apply_distance_pid_button)
+        
+        self.pid_tuning_group.setEnabled(False)
+
+        control_layout.addWidget(self.pid_tuning_group)
+
         # Control buttons
         button_layout = QVBoxLayout()
         self.connect_button = QPushButton("Connect")
@@ -207,15 +237,18 @@ class MainWindow(QMainWindow):
         if not self.is_connected:
             self.robot_client.connect()
             self.connect_button.setText("Disconnect")
-            self.autonav_button.setEnabled(True) # Enable autonav button on connect
+            self.autonav_button.setEnabled(True)
+            if hasattr(self, 'pid_tuning_group') and self.pid_tuning_group:
+                 self.pid_tuning_group.setEnabled(True)
             self.is_connected = True
         else:
-            # If auto-nav is active when disconnecting, turn it off on client and server
             if self.is_autonav_active:
-                self.toggle_autonav() # This will send command and update client state
+                self.toggle_autonav()
             self.robot_client.disconnect()
             self.connect_button.setText("Connect")
-            self.autonav_button.setEnabled(False) # Disable autonav button on disconnect
+            self.autonav_button.setEnabled(False)
+            if hasattr(self, 'pid_tuning_group') and self.pid_tuning_group:
+                 self.pid_tuning_group.setEnabled(False)
             self.is_connected = False
             
     def emergency_stop(self):
@@ -270,4 +303,32 @@ class MainWindow(QMainWindow):
                 scaled_pixmap = pixmap.scaled(self.video_label.size(), 
                                             Qt.AspectRatioMode.KeepAspectRatio,
                                             Qt.TransformationMode.SmoothTransformation)
-                self.video_label.setPixmap(scaled_pixmap) 
+                self.video_label.setPixmap(scaled_pixmap)
+
+    def apply_turning_pid_settings(self):
+        if not self.is_connected:
+            logger.warning("Not connected. Cannot apply PID settings.")
+            return
+        try:
+            kp = float(self.turning_pid_inputs["Kp"].text())
+            ki = float(self.turning_pid_inputs["Ki"].text())
+            kd = float(self.turning_pid_inputs["Kd"].text())
+            payload = {"kp": kp, "ki": ki, "kd": kd}
+            self.robot_client.send_command("SET_NAV_TURNING_PID", payload)
+            logger.info(f"CLIENT: Sent SET_NAV_TURNING_PID with {payload}")
+        except ValueError:
+            logger.error("Invalid input for turning PID gains. Please enter numbers.")
+
+    def apply_distance_pid_settings(self):
+        if not self.is_connected:
+            logger.warning("Not connected. Cannot apply PID settings.")
+            return
+        try:
+            kp = float(self.distance_pid_inputs["Kp"].text())
+            ki = float(self.distance_pid_inputs["Ki"].text())
+            kd = float(self.distance_pid_inputs["Kd"].text())
+            payload = {"kp": kp, "ki": ki, "kd": kd}
+            self.robot_client.send_command("SET_NAV_DISTANCE_PID", payload)
+            logger.info(f"CLIENT: Sent SET_NAV_DISTANCE_PID with {payload}")
+        except ValueError:
+            logger.error("Invalid input for distance PID gains. Please enter numbers.") 

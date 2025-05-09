@@ -22,6 +22,16 @@ class PIDController:
         self.max_integral = 500 # Cap integral to prevent windup
         self.min_integral = -500
 
+    def set_gains(self, kp: float, ki: float, kd: float):
+        """Dynamically update PID gains."""
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        # Optionally, could reset integral and previous_error here, 
+        # or leave them to adapt to new gains.
+        # self.reset() # Consider if resetting state on gain change is desired.
+        logger.info(f"PID gains updated: Kp={self.kp}, Ki={self.ki}, Kd={self.kd}")
+
     def compute(self, current_value: float) -> float:
         current_time = time.time()
         dt = current_time - self.last_time
@@ -70,6 +80,10 @@ class NavigationController:
             setpoint=config.NAV_TARGET_APPROACH_DISTANCE_M
         )
         
+        # Store initial config values for reference or potential revert
+        self._initial_turning_pid_gains = (config.NAV_TURNING_PID_KP, config.NAV_TURNING_PID_KI, config.NAV_TURNING_PID_KD)
+        self._initial_distance_pid_gains = (config.NAV_DISTANCE_PID_KP, config.NAV_DISTANCE_PID_KI, config.NAV_DISTANCE_PID_KD)
+
         self.target_approach_distance_m = config.NAV_TARGET_APPROACH_DISTANCE_M
         self.distance_threshold_m = config.NAV_DISTANCE_THRESHOLD_M
         self.x_threshold_m = config.NAV_X_THRESHOLD_M
@@ -200,4 +214,14 @@ class NavigationController:
     def stop_navigation(self):
         """Stops any active navigation and resets the motor controller."""
         self.clear_target()
-        logger.info("NavigationController: Navigation explicitly stopped.") 
+        logger.info("NavigationController: Navigation explicitly stopped.")
+
+    def update_turning_pid_gains(self, kp: float, ki: float, kd: float):
+        """Updates the gains for the turning PID controller."""
+        self.turning_pid.set_gains(kp, ki, kd)
+        logger.info(f"NavigationController: Turning PID gains updated to Kp={kp}, Ki={ki}, Kd={kd}")
+
+    def update_distance_pid_gains(self, kp: float, ki: float, kd: float):
+        """Updates the gains for the distance PID controller."""
+        self.distance_pid.set_gains(kp, ki, kd)
+        logger.info(f"NavigationController: Distance PID gains updated to Kp={kp}, Ki={ki}, Kd={kd}") 

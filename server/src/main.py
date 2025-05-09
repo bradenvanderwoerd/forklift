@@ -79,6 +79,8 @@ class ForkliftServer:
         self.command_server.register_handler('servo', self._handle_servo_command)
         self.command_server.register_handler('stop', self._handle_emergency_stop)
         self.command_server.register_handler('TOGGLE_AUTONAV', self._handle_toggle_autonav_command)
+        self.command_server.register_handler('SET_NAV_TURNING_PID', self._handle_set_nav_turning_pid)
+        self.command_server.register_handler('SET_NAV_DISTANCE_PID', self._handle_set_nav_distance_pid)
     
     def _handle_drive_command(self, data: Dict[str, Any]):
         if self.test_autonav_active:
@@ -177,6 +179,38 @@ class ForkliftServer:
             if hasattr(self, 'navigation_controller') and self.navigation_controller:
                 self.navigation_controller.clear_target()
             # self.motor_controller.stop() # clear_target() in nav controller should handle this
+    
+    def _handle_set_nav_turning_pid(self, data: Dict[str, Any]):
+        """Handles command to set turning PID gains for NavigationController."""
+        if not hasattr(self, 'navigation_controller') or not self.navigation_controller:
+            logger.error("NavigationController not available to set PID gains.")
+            return
+        
+        pid_values = data.get("value", {})
+        try:
+            kp = float(pid_values.get("kp"))
+            ki = float(pid_values.get("ki"))
+            kd = float(pid_values.get("kd"))
+            self.navigation_controller.update_turning_pid_gains(kp, ki, kd)
+            logger.info(f"Turning PID gains updated via command: Kp={kp}, Ki={ki}, Kd={kd}")
+        except (TypeError, ValueError) as e:
+            logger.error(f"Invalid PID values received for turning PID: {pid_values}. Error: {e}")
+
+    def _handle_set_nav_distance_pid(self, data: Dict[str, Any]):
+        """Handles command to set distance PID gains for NavigationController."""
+        if not hasattr(self, 'navigation_controller') or not self.navigation_controller:
+            logger.error("NavigationController not available to set PID gains.")
+            return
+        
+        pid_values = data.get("value", {})
+        try:
+            kp = float(pid_values.get("kp"))
+            ki = float(pid_values.get("ki"))
+            kd = float(pid_values.get("kd"))
+            self.navigation_controller.update_distance_pid_gains(kp, ki, kd)
+            logger.info(f"Distance PID gains updated via command: Kp={kp}, Ki={ki}, Kd={kd}")
+        except (TypeError, ValueError) as e:
+            logger.error(f"Invalid PID values received for distance PID: {pid_values}. Error: {e}")
     
     def _run_video_server(self):
         """Run video server in a separate thread"""
