@@ -13,7 +13,7 @@ from .controllers.servo import ServoController
 from .controllers.navigation import NavigationController
 from .network.video_stream import VideoStreamer
 from .network.tcp_server import CommandServer
-from .utils.config import HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, SERVO_PWM_PIN, MANUAL_TURN_SPEED
+from .utils.config import HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, SERVO_PWM_PIN, MANUAL_TURN_SPEED, FORK_DOWN_POSITION
 
 # Set up logging
 logging.basicConfig(
@@ -55,7 +55,7 @@ class ForkliftServer:
         self.servo_controller = ServoController()
         self.navigation_controller = NavigationController(self.motor_controller)
         
-        self.servo_controller.set_position(45)  # Set servo to 45 on startup for testing
+        self.servo_controller.set_position(FORK_DOWN_POSITION)  # Set servo to safe down on startup
         
         # Initialize network components, passing configured host and ports
         self.video_streamer = VideoStreamer(host=HOST, port=SERVER_VIDEO_UDP_PORT)
@@ -299,10 +299,10 @@ class ForkliftServer:
             except Exception as e:
                 logger.error(f"Error during motor_controller.stop() in cleanup: {e}")
             try:
-                logger.info("Resetting servo to 0 definitively...")
-                self.servo_controller.set_position(0)
+                logger.info("Resetting servo to safe down position definitively...")
+                self.servo_controller.set_position(FORK_DOWN_POSITION)
             except Exception as e:
-                logger.error(f"Error during servo_controller.set_position(0) in cleanup: {e}")
+                logger.error(f"Error during servo_controller.set_position(FORK_DOWN_POSITION) in cleanup: {e}")
             
             # Then stop network components
             try:

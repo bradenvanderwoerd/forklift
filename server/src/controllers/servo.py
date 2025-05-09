@@ -10,15 +10,16 @@ class ServoController:
     def __init__(self):
         GPIO.setup(SERVO_PWM_PIN, GPIO.OUT) # Uncomment
         self.pin = SERVO_PWM_PIN
-        self.current_position = 45 # Changed initial position from 0 to 45 for testing
-        # self.target_position = 0 # Not strictly needed if set_position manages targets
+        # Initialize to the new safe FORK_DOWN_POSITION
+        self.current_position = FORK_DOWN_POSITION 
         
         # Servo movement parameters from config
         self.step_degrees = SERVO_STEP_DEGREES
         self.step_delay_seconds = SERVO_STEP_DELAY_SECONDS
         
-        self.min_angle = 10 # Physical min angle of servo/forklift
-        self.max_angle = 45  # Physical max angle of servo/forklift (example)
+        # Set min/max angles based on new safe positions
+        self.min_angle = FORK_DOWN_POSITION 
+        self.max_angle = FORK_UP_POSITION  
         
         # PWM setup
         self.pwm = GPIO.PWM(self.pin, 50)  # Uncomment 
