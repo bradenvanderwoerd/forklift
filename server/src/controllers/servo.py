@@ -1,4 +1,8 @@
-from ..utils.config import SERVO_PWM_PIN, FORK_DOWN_POSITION, FORK_UP_POSITION, SERVO_STEP_DEGREES, SERVO_STEP_DELAY_SECONDS
+from ..utils.config import (
+    SERVO_PWM_PIN, FORK_DOWN_POSITION, FORK_UP_POSITION, 
+    SERVO_STEP_DEGREES, SERVO_STEP_DELAY_SECONDS, AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE,
+    AUTONAV_FORK_CARRY_ANGLE
+)
 import pigpio # Changed from RPi.GPIO
 import time
 from typing import Optional
@@ -13,14 +17,15 @@ SERVO_MAX_PULSEWIDTH = 2500 # Microseconds for 180 degrees (typical)
 class ServoController:
     def __init__(self):
         self.pin = SERVO_PWM_PIN
+        # Initialize to the default FORK_DOWN_POSITION (now 80)
         self.current_position_degrees = FORK_DOWN_POSITION 
         
         self.step_degrees = SERVO_STEP_DEGREES
         self.step_delay_seconds = SERVO_STEP_DELAY_SECONDS
         
-        # min_angle_degrees and max_angle_degrees define the calibrated safe operating range
-        self.min_angle_degrees = FORK_DOWN_POSITION 
-        self.max_angle_degrees = FORK_UP_POSITION  
+        # Set min/max angles. Min is FORK_UP_POSITION (0). Max is FORK_DOWN_POSITION (80).
+        self.min_angle_degrees = FORK_UP_POSITION 
+        self.max_angle_degrees = FORK_DOWN_POSITION # This is 80, same as AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE
 
         try:
             self.pi = pigpio.pi() 
@@ -53,7 +58,7 @@ class ServoController:
             logger.error("pigpio not connected. Cannot set servo position.")
             return
 
-        # Clamp target_angle_degrees to the calibrated min/max for this servo
+        # Clamp target_angle_degrees to the controller's defined min/max operational range
         target_angle_degrees = max(self.min_angle_degrees, min(self.max_angle_degrees, target_angle_degrees))
         
         logger.info(f"Servo: Moving from {self.current_position_degrees:.2f} to {target_angle_degrees:.2f} degrees.")
@@ -107,11 +112,11 @@ class ServoController:
         logger.info(f"Servo: Reached target {self.current_position_degrees:.2f} deg. Pulses stopped.")
     
     def go_to_down_position(self, blocking: bool = True):
-        logger.info("Servo: Moving to FORK_DOWN_POSITION.")
+        logger.info("Servo: Moving to FORK_DOWN_POSITION.") # Will target 80
         self.set_position(FORK_DOWN_POSITION, blocking=blocking)
 
     def go_to_up_position(self, blocking: bool = True):
-        logger.info("Servo: Moving to FORK_UP_POSITION.")
+        logger.info("Servo: Moving to FORK_UP_POSITION.") # Will target 0
         self.set_position(FORK_UP_POSITION, blocking=blocking)
 
     def get_position(self) -> float:

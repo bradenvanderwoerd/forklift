@@ -13,7 +13,11 @@ from .controllers.servo import ServoController
 from .controllers.navigation import NavigationController
 from .network.video_stream import VideoStreamer
 from .network.tcp_server import CommandServer
-from .utils.config import HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, SERVO_PWM_PIN, MANUAL_TURN_SPEED, FORK_DOWN_POSITION
+from .utils.config import (
+    HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, 
+    SERVO_PWM_PIN, MANUAL_TURN_SPEED, FORK_DOWN_POSITION, FORK_UP_POSITION
+    # AUTONAV_FORK_CARRY_ANGLE is not directly used in main.py for manual control yet
+)
 
 # Set up logging
 logging.basicConfig(
@@ -55,7 +59,8 @@ class ForkliftServer:
         self.servo_controller = ServoController()
         self.navigation_controller = NavigationController(self.motor_controller)
         
-        self.servo_controller.set_position(FORK_DOWN_POSITION)  # Set servo to safe down on startup
+        # Explicitly set to FORK_DOWN_POSITION (80) on startup
+        self.servo_controller.set_position(FORK_DOWN_POSITION)  
         
         # Initialize network components, passing configured host and ports
         self.video_streamer = VideoStreamer(host=HOST, port=SERVER_VIDEO_UDP_PORT)
@@ -143,15 +148,11 @@ class ForkliftServer:
             except ValueError:
                 logger.error(f"Invalid servo position received: {position}. Must be a number.")
         elif command_value.get('step_up'): 
-            current_angle = self.servo_controller.get_position()
-            new_angle = current_angle + 2.0
-            logger.info(f"Servo command: Stepping UP from {current_angle:.2f} to {new_angle:.2f} degrees")
-            self.servo_controller.set_position(new_angle)
+            logger.info("Servo command: Go to UP position") # Will go to FORK_UP_POSITION (0)
+            self.servo_controller.go_to_up_position()
         elif command_value.get('step_down'):
-            current_angle = self.servo_controller.get_position()
-            new_angle = current_angle - 2.0
-            logger.info(f"Servo command: Stepping DOWN from {current_angle:.2f} to {new_angle:.2f} degrees")
-            self.servo_controller.set_position(new_angle)
+            logger.info("Servo command: Go to DOWN position") # Will go to FORK_DOWN_POSITION (80)
+            self.servo_controller.go_to_down_position()
         else:
             logger.warning(f"Unknown servo action or missing position in command: {command_value}")
     
@@ -303,8 +304,8 @@ class ForkliftServer:
             except Exception as e:
                 logger.error(f"Error during motor_controller.stop() in cleanup: {e}")
             try:
-                logger.info("Resetting servo to safe down position definitively...")
-                self.servo_controller.set_position(FORK_DOWN_POSITION)
+                logger.info("Resetting servo to default down position definitively...") # Updated log to reflect 80 degrees
+                self.servo_controller.set_position(FORK_DOWN_POSITION) # Use FORK_DOWN_POSITION (80)
             except Exception as e:
                 logger.error(f"Error during servo_controller.set_position(FORK_DOWN_POSITION) in cleanup: {e}")
             
