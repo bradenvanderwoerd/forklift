@@ -36,77 +36,46 @@ class ServoController:
         return 2.5 + (angle / 180.0) * 10.0
     
     def set_position(self, target_angle: float, blocking: bool = True):
-        """Set servo to target_angle, moving smoothly in steps."""
         target_angle = max(self.min_angle, min(self.max_angle, target_angle))
-        logger.info(f"Servo: Moving from {self.current_position:.2f} to {target_angle:.2f} degrees.") # Revert log
+        current_angle_for_log = self.current_position # For logging clarity
+        logger.info(f"Servo (Direct Mode Test): Requested move from {current_angle_for_log:.2f} to {target_angle:.2f} degrees.")
 
-        # Start PWM at current known position. This ensures it's active for ChangeDutyCycle.
-        # If we are already at target, we'll stop it shortly.
-        self.pwm.start(self._angle_to_duty_cycle(self.current_position))
+        # Ensure previous PWM is stopped (belt-and-suspenders, should be stopped already)
+        try:
+            self.pwm.stop()
+        except Exception: # May occur if not started, or on first call if somehow uninitialized
+            pass
 
-        if abs(self.current_position - target_angle) < self.step_degrees / 2.0:
-            logger.debug("Servo: Already at target angle or very close.") # Revert log
-            if self.current_position != target_angle:
-                 # Briefly ensure it's at the precise target_angle if slightly off
-                 self.pwm.ChangeDutyCycle(self._angle_to_duty_cycle(target_angle))
-                 self.current_position = target_angle
-                 if blocking: # Allow this micro-adjustment to complete
-                     time.sleep(max(self.step_delay_seconds, 0.05)) 
-            if blocking: # Add a small settle time even if no significant move
-                time.sleep(max(self.step_delay_seconds, 0.05))
-            self.pwm.stop() # Stop PWM
-            logger.info(f"Servo: At target {self.current_position:.2f}. PWM stopped.")
-            return
-
-        # Determine direction and number of steps
-        if target_angle > self.current_position:
-            direction = 1
-        else:
-            direction = -1
+        # Start PWM directly at the final target duty cycle
+        target_duty_cycle = self._angle_to_duty_cycle(target_angle)
+        logger.info(f"Servo (Direct Mode Test): Starting PWM with duty cycle for target {target_angle:.2f} degrees.")
+        self.pwm.start(target_duty_cycle)
         
-        num_steps = int(abs(target_angle - self.current_position) / self.step_degrees)
-        if num_steps == 0 and self.current_position != target_angle: # Ensure at least one step if not perfectly aligned
-            num_steps = 1
+        # Update software position immediately as we assume it will go there
+        self.current_position = target_angle 
 
-        for i in range(num_steps):
-            next_step_angle = self.current_position + (direction * self.step_degrees)
-            # Ensure we don't overshoot the final target_angle with the last step
-            if (direction == 1 and next_step_angle > target_angle) or \
-               (direction == -1 and next_step_angle < target_angle):
-                next_step_angle = target_angle
-            
-            self.pwm.ChangeDutyCycle(self._angle_to_duty_cycle(next_step_angle)) # Uncomment
-            self.current_position = next_step_angle
-            # logger.debug(f"Servo step: {self.current_position:.2f}") # Optional: log each step
-            if blocking:
-                time.sleep(self.step_delay_seconds)
-        
-        # Ensure final position is precisely set
-        if self.current_position != target_angle:
-             self.pwm.ChangeDutyCycle(self._angle_to_duty_cycle(target_angle)) # Uncomment
-             self.current_position = target_angle
-
-        # Allow servo to reach the position and then stop PWM signal to prevent jitter
-        # A small delay for the servo to physically complete the last move.
-        # self.step_delay_seconds is the delay between steps. A final settle time might be similar
-        # or slightly longer. If blocking, we assume the user wants to wait.
         if blocking:
-            # Use a slightly longer delay for final settling if step_delay is very small,
-            # otherwise, the step_delay itself should be sufficient.
-            final_settle_delay = max(self.step_delay_seconds, 0.3) # Ensure at least 0.3s (was 0.1s)
-            time.sleep(final_settle_delay)
-        
-        self.pwm.stop() # Stop PWM signal pulses
-        logger.info(f"Servo: Reached target position {self.current_position:.2f} degrees. PWM stopped.") # Revert log
+            # Estimate travel time. SG90 speed is ~0.1s/60deg. Typical range 0-90 deg.
+            # Max travel could be 90 deg. So max time ~0.15s for 90 deg.
+            # Let's use a fixed, somewhat generous sleep to ensure it can reach for testing.
+            # This is NOT smooth movement.
+            estimated_travel_time = 0.5 # seconds, adjust if needed for full sweep
+            logger.info(f"Servo (Direct Mode Test): Sleeping for {estimated_travel_time}s to allow travel.")
+            time.sleep(estimated_travel_time)
+
+        # Stop PWM
+        logger.info(f"Servo (Direct Mode Test): Stopping PWM after attempted move to {self.current_position:.2f}.")
+        self.pwm.stop()
+        logger.info(f"Servo (Direct Mode Test): Move from {current_angle_for_log:.2f} to {self.current_position:.2f} complete. PWM stopped.")
     
     def go_to_down_position(self, blocking: bool = True):
         """Move servo to the predefined FORK_DOWN_POSITION."""
-        logger.info("Servo: Moving to FORK_DOWN_POSITION.") # Revert log
+        logger.info("Servo: Moving to FORK_DOWN_POSITION.")
         self.set_position(FORK_DOWN_POSITION, blocking=blocking)
 
     def go_to_up_position(self, blocking: bool = True):
         """Move servo to the predefined FORK_UP_POSITION."""
-        logger.info("Servo: Moving to FORK_UP_POSITION.") # Revert log
+        logger.info("Servo: Moving to FORK_UP_POSITION.")
         self.set_position(FORK_UP_POSITION, blocking=blocking)
 
     def get_position(self) -> float:
