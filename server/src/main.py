@@ -142,12 +142,12 @@ class ForkliftServer:
                 logger.info(f"Servo position set to: {angle}")
             except ValueError:
                 logger.error(f"Invalid servo position received: {position}. Must be a number.")
-        elif command_value.get('step_up'): # Keep step_up/step_down if client might send them
-            logger.info("Servo stepping up")
-            self.servo_controller.step_up()
+        elif command_value.get('step_up'): 
+            logger.info("Servo command: Go to UP position")
+            self.servo_controller.go_to_up_position()
         elif command_value.get('step_down'):
-            logger.info("Servo stepping down")
-            self.servo_controller.step_down()
+            logger.info("Servo command: Go to DOWN position")
+            self.servo_controller.go_to_down_position()
         else:
             logger.warning(f"Unknown servo action or missing position in command: {command_value}")
     
