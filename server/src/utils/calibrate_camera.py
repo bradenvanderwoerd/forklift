@@ -13,7 +13,7 @@ CALIBRATION_FILE = "../camera_calibration.npz" # Output file, relative path
 PATTERN_SIZE = (6, 8) # Internal corners: (cols-1, rows-1)
 SQUARE_LENGTH = 0.0204 # Square size in meters
 MARKER_LENGTH = 0.015 # ArUco marker size in meters
-ARUCO_DICT_NAME = aruco.DICT_7X7_250 # The dictionary used for markers ON the board
+ARUCO_DICT_NAME = aruco.DICT_7X7_50 # The dictionary used for markers ON the board
 # -------------------
 
 def calibrate():
@@ -67,18 +67,20 @@ def calibrate():
             response, charuco_corners, charuco_ids = aruco.interpolateCornersCharuco(
                 corners, ids, gray, board
             )
+            # Log the number of corners found for every attempt
+            print(f"  InterpolateCornersCharuco response (corners found): {response}")
             
             # If enough corners were found, store the results
             if response > 10: # Require a decent number of corners found
                 all_charuco_corners.append(charuco_corners)
                 all_charuco_ids.append(charuco_ids)
-                print(f"  Detected {response} ChArUco corners.")
+                # print(f"  Detected {response} ChArUco corners.") # Redundant now
                 # Optional: Draw and display corners found - UNCOMMENTED FOR DEBUGGING
                 img_drawn = aruco.drawDetectedCornersCharuco(img.copy(), charuco_corners, charuco_ids)
                 cv2.imshow('Charuco Detection', cv2.resize(img_drawn, (img_size[0]//2, img_size[1]//2)))
                 cv2.waitKey(0) # Wait indefinitely until a key is pressed
             else:
-                print(f"  Warning: Not enough ChArUco corners found ({response}).")
+                # print(f"  Warning: Not enough ChArUco corners found ({response}).") # Redundant now
                 # Also show images where detection failed or was low
                 if ids is not None:
                     img_drawn = aruco.drawDetectedMarkers(img.copy(), corners, ids)
