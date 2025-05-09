@@ -73,14 +73,22 @@ def calibrate():
                 all_charuco_corners.append(charuco_corners)
                 all_charuco_ids.append(charuco_ids)
                 print(f"  Detected {response} ChArUco corners.")
-                # Optional: Draw and display corners found
-                # img_drawn = aruco.drawDetectedCornersCharuco(img.copy(), charuco_corners, charuco_ids)
-                # cv2.imshow('Charuco Detection', cv2.resize(img_drawn, (img_size[0]//2, img_size[1]//2)))
-                # cv2.waitKey(50)
+                # Optional: Draw and display corners found - UNCOMMENTED FOR DEBUGGING
+                img_drawn = aruco.drawDetectedCornersCharuco(img.copy(), charuco_corners, charuco_ids)
+                cv2.imshow('Charuco Detection', cv2.resize(img_drawn, (img_size[0]//2, img_size[1]//2)))
+                cv2.waitKey(0) # Wait indefinitely until a key is pressed
             else:
                 print(f"  Warning: Not enough ChArUco corners found ({response}).")
+                # Also show images where detection failed or was low
+                if ids is not None:
+                    img_drawn = aruco.drawDetectedMarkers(img.copy(), corners, ids)
+                    cv2.imshow('Charuco Detection', cv2.resize(img_drawn, (img_size[0]//2, img_size[1]//2)))
+                    cv2.waitKey(0)
         else:
             print("  Warning: Not enough ArUco markers detected.")
+            # Show the image even if no markers found
+            cv2.imshow('Charuco Detection', cv2.resize(img.copy(), (img_size[0]//2, img_size[1]//2)))
+            cv2.waitKey(0)
 
     cv2.destroyAllWindows()
 
