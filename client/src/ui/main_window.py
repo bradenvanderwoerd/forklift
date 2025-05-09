@@ -56,8 +56,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Forklift Control")
-        self.setMinimumSize(660, 680)
-        self.resize(660, 680)
+        self.setMinimumSize(950, 680)
+        self.resize(950, 680)
         
         # Initialize robot client
         self.robot_client = RobotClient()
@@ -73,17 +73,12 @@ class MainWindow(QMainWindow):
         self.video_label.setMinimumHeight(480)
         layout.addWidget(self.video_label, stretch=2)
         
-        # --- Control Panel Area ---
-        control_panel_area = QWidget()
-        # Use a QVBoxLayout for the main control area to stack groups
-        main_control_layout = QVBoxLayout(control_panel_area) 
-        layout.addWidget(control_panel_area, stretch=1)
-
-        # --- Row 1: Manual Drive Controls (Speed + Keys) ---
-        manual_drive_controls_widget = QWidget()
-        manual_drive_layout = QHBoxLayout(manual_drive_controls_widget)
+        # Control panel - Revert to QHBoxLayout for the main control area
+        control_panel = QWidget()
+        control_layout = QHBoxLayout(control_panel) # This is the main horizontal layout for controls
+        layout.addWidget(control_panel, stretch=1)
         
-        # Speed control (remains QVBoxLayout internally)
+        # --- Item 1: Speed control (far left) ---
         speed_layout = QVBoxLayout()
         self.speed_slider = QSlider(Qt.Orientation.Vertical)
         self.speed_slider.setRange(0, 100)
@@ -91,95 +86,70 @@ class MainWindow(QMainWindow):
         self.speed_slider.valueChanged.connect(self.on_speed_change)
         speed_layout.addWidget(QLabel("Speed"))
         speed_layout.addWidget(self.speed_slider)
-        manual_drive_layout.addLayout(speed_layout)
+        control_layout.addLayout(speed_layout)
         
-        # WASD Controls & Servo Arrows (remains QGridLayout internally, then centered)
+        # --- Item 2: WASD Controls & Servo Arrows (middle-left) ---
         wasd_layout = QGridLayout()
         wasd_layout.setSpacing(10)
-        
-        # Create key displays for WASD
         self.w_key = KeyDisplay("W")
         self.a_key = KeyDisplay("A")
         self.s_key = KeyDisplay("S")
         self.d_key = KeyDisplay("D")
         self.space_key = KeyDisplay("SPACE", width=120, height=35)
-        
-        # Create key displays for Servo Up/Down Arrows
-        self.up_arrow_key = KeyDisplay("↑") # Up arrow symbol
-        self.down_arrow_key = KeyDisplay("↓") # Down arrow symbol
-        
-        # Add WASD keys to grid
+        self.up_arrow_key = KeyDisplay("↑")
+        self.down_arrow_key = KeyDisplay("↓")
         wasd_layout.addWidget(self.w_key, 0, 1)
         wasd_layout.addWidget(self.a_key, 1, 0)
         wasd_layout.addWidget(self.s_key, 1, 1)
         wasd_layout.addWidget(self.d_key, 1, 2)
-        wasd_layout.addWidget(self.space_key, 2, 0, 1, 3) # Spans 3 columns
-
-        # Add Servo Up/Down keys to grid (to the right of D key)
-        wasd_layout.addWidget(self.up_arrow_key, 0, 3) # Row 0, Col 3
-        wasd_layout.addWidget(self.down_arrow_key, 1, 3) # Row 1, Col 3
-        
-        # Center the WASD & Servo key grid
+        wasd_layout.addWidget(self.space_key, 2, 0, 1, 3)
+        wasd_layout.addWidget(self.up_arrow_key, 0, 3)
+        wasd_layout.addWidget(self.down_arrow_key, 1, 3)
         key_grid_widget = QWidget()
         key_grid_widget.setLayout(wasd_layout)
-        key_grid_outer_layout = QHBoxLayout()
+        key_grid_outer_layout = QHBoxLayout() # Centering layout for the key grid
         key_grid_outer_layout.addStretch(1)
         key_grid_outer_layout.addWidget(key_grid_widget)
         key_grid_outer_layout.addStretch(1)
-        manual_drive_layout.addLayout(key_grid_outer_layout)
-        
-        main_control_layout.addWidget(manual_drive_controls_widget) # Add this row to the main vertical layout
+        control_layout.addLayout(key_grid_outer_layout)
 
-        # --- Row 2: PID Tuning UI Section ---
+        # --- Item 3: Control buttons (Connect, AutoNav, E-Stop) (middle-right) ---
+        action_buttons_layout = QVBoxLayout()
+        self.connect_button = QPushButton("Connect")
+        self.connect_button.clicked.connect(self.toggle_connection)
+        action_buttons_layout.addWidget(self.connect_button)
+        self.autonav_button = QPushButton("Start Auto-Nav")
+        self.autonav_button.clicked.connect(self.toggle_autonav)
+        self.autonav_button.setEnabled(False)
+        action_buttons_layout.addWidget(self.autonav_button)
+        self.emergency_button = QPushButton("Emergency Stop")
+        self.emergency_button.setStyleSheet("background-color: red; color: white;")
+        self.emergency_button.clicked.connect(self.emergency_stop)
+        action_buttons_layout.addWidget(self.emergency_button)
+        control_layout.addLayout(action_buttons_layout)
+        
+        # --- Item 4: PID Tuning UI Section (far right) ---
         self.pid_tuning_group = QGroupBox("PID Tuning")
         pid_tuning_layout = QFormLayout(self.pid_tuning_group)
         pid_tuning_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-
         self.turning_pid_inputs = {}
         for param in ["Kp", "Ki", "Kd"]:
             self.turning_pid_inputs[param] = QLineEdit()
             self.turning_pid_inputs[param].setValidator(QDoubleValidator(0, 10000.0, 3))
             pid_tuning_layout.addRow(f"Turn {param}:", self.turning_pid_inputs[param])
-        
         self.apply_turning_pid_button = QPushButton("Apply Turning PID")
         self.apply_turning_pid_button.clicked.connect(self.apply_turning_pid_settings)
         pid_tuning_layout.addRow(self.apply_turning_pid_button)
-
         self.distance_pid_inputs = {}
         for param in ["Kp", "Ki", "Kd"]:
             self.distance_pid_inputs[param] = QLineEdit()
             self.distance_pid_inputs[param].setValidator(QDoubleValidator(0, 10000.0, 3))
             pid_tuning_layout.addRow(f"Dist {param}:", self.distance_pid_inputs[param])
-
         self.apply_distance_pid_button = QPushButton("Apply Distance PID")
         self.apply_distance_pid_button.clicked.connect(self.apply_distance_pid_settings)
         pid_tuning_layout.addRow(self.apply_distance_pid_button)
-        
         self.pid_tuning_group.setEnabled(False)
-
-        main_control_layout.addWidget(self.pid_tuning_group) # Add PID group to the main vertical layout
-
-        # --- Row 3: Global Control Buttons (Connect, AutoNav, E-Stop) ---
-        global_buttons_widget = QWidget()
-        global_buttons_layout = QHBoxLayout(global_buttons_widget) # Arrange these horizontally
-        global_buttons_layout.addStretch(1) # Center the buttons
-
-        self.connect_button = QPushButton("Connect")
-        self.connect_button.clicked.connect(self.toggle_connection)
-        global_buttons_layout.addWidget(self.connect_button)
-        
-        self.autonav_button = QPushButton("Start Auto-Nav")
-        self.autonav_button.clicked.connect(self.toggle_autonav)
-        self.autonav_button.setEnabled(False)
-        global_buttons_layout.addWidget(self.autonav_button)
-        
-        self.emergency_button = QPushButton("Emergency Stop")
-        self.emergency_button.setStyleSheet("background-color: red; color: white;")
-        self.emergency_button.clicked.connect(self.emergency_stop)
-        global_buttons_layout.addWidget(self.emergency_button)
-
-        global_buttons_layout.addStretch(1) # Center the buttons
-        main_control_layout.addWidget(global_buttons_widget) # Add this row to the main vertical layout
+        control_layout.addWidget(self.pid_tuning_group)
         
         # Video update timer
         self.timer = QTimer()
