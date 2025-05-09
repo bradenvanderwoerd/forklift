@@ -102,8 +102,9 @@ class VideoStreamer:
                 self.camera_matrix = data['mtx']
                 self.dist_coeffs = data['dist']
                 logger.info(f"Successfully loaded camera calibration data from {calibration_file_path}")
-                # print("Camera Matrix (mtx):\n", self.camera_matrix) # For debugging
-                # print("Distortion Coefficients (dist):\n", self.dist_coeffs) # For debugging
+                logger.info(f"Camera Matrix (mtx):\\n{self.camera_matrix}") 
+                logger.info(f"Principal Point: cx = {self.camera_matrix[0, 2]}, cy = {self.camera_matrix[1, 2]}")
+                logger.info(f"Video Width from config: {config.VIDEO_WIDTH}, Video Height from config: {config.VIDEO_HEIGHT}")
         except FileNotFoundError:
             logger.warning(f"Camera calibration file not found at {calibration_file_path}. Pose estimation will be disabled.")
         except Exception as e:
