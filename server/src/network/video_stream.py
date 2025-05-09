@@ -81,10 +81,10 @@ class VideoStreamer:
         self.camera = None
         self.loop = None
         self.quality_controller = AdaptiveQualityController()
-        self.aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
+        self.aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_7X7_50)
         self.aruco_params = aruco.DetectorParameters()
         self.aruco_detector = aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
-        logger.info("ArUco detector initialized.")
+        logger.info("ArUco detector initialized with DICT_7X7_50.")
         
     def _initialize_camera(self):
         """Initialize the camera"""
