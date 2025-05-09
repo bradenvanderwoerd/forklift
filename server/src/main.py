@@ -143,11 +143,15 @@ class ForkliftServer:
             except ValueError:
                 logger.error(f"Invalid servo position received: {position}. Must be a number.")
         elif command_value.get('step_up'): 
-            logger.info("Servo command: Go to UP position")
-            self.servo_controller.go_to_up_position()
+            current_angle = self.servo_controller.get_position()
+            new_angle = current_angle + 2.0
+            logger.info(f"Servo command: Stepping UP from {current_angle:.2f} to {new_angle:.2f} degrees")
+            self.servo_controller.set_position(new_angle)
         elif command_value.get('step_down'):
-            logger.info("Servo command: Go to DOWN position")
-            self.servo_controller.go_to_down_position()
+            current_angle = self.servo_controller.get_position()
+            new_angle = current_angle - 2.0
+            logger.info(f"Servo command: Stepping DOWN from {current_angle:.2f} to {new_angle:.2f} degrees")
+            self.servo_controller.set_position(new_angle)
         else:
             logger.warning(f"Unknown servo action or missing position in command: {command_value}")
     
