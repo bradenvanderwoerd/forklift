@@ -56,8 +56,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Forklift Control")
-        self.setMinimumSize(950, 880)
-        self.resize(950, 880)
+        self.setMinimumSize(950, 840)
+        self.resize(950, 840)
         
         # Initialize robot client
         self.robot_client = RobotClient()

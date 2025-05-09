@@ -13,7 +13,7 @@ from .controllers.servo import ServoController
 from .controllers.navigation import NavigationController
 from .network.video_stream import VideoStreamer
 from .network.tcp_server import CommandServer
-from .utils.config import HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, SERVO_PWM_PIN
+from .utils.config import HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, SERVO_PWM_PIN, MANUAL_TURN_SPEED
 
 # Set up logging
 logging.basicConfig(
@@ -109,11 +109,11 @@ class ForkliftServer:
             logger.info("Executing BACKWARD action")
             self.motor_controller.drive_backward(speed)
         elif direction == "LEFT":
-            logger.info("Executing LEFT action")
-            self.motor_controller.turn_left(speed)
+            logger.info(f"Executing LEFT action with fixed speed {MANUAL_TURN_SPEED}")
+            self.motor_controller.turn_right(MANUAL_TURN_SPEED)
         elif direction == "RIGHT":
-            logger.info("Executing RIGHT action")
-            self.motor_controller.turn_right(speed)
+            logger.info(f"Executing RIGHT action with fixed speed {MANUAL_TURN_SPEED}")
+            self.motor_controller.turn_left(MANUAL_TURN_SPEED)
         else:
             logger.info("Executing ELSE (STOP) action")
             self.motor_controller.stop()
