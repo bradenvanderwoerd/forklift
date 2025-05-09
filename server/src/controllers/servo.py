@@ -1,5 +1,5 @@
 from ..utils.config import SERVO_PWM_PIN, FORK_DOWN_POSITION, FORK_UP_POSITION, SERVO_STEP_DEGREES, SERVO_STEP_DELAY_SECONDS
-import RPi.GPIO as GPIO
+# import RPi.GPIO as GPIO # Comment out
 import time
 from typing import Optional
 import logging
@@ -8,8 +8,8 @@ logger = logging.getLogger(__name__)
 
 class ServoController:
     def __init__(self):
-        GPIO.setup(SERVO_PWM_PIN, GPIO.OUT)
-        self.pin = SERVO_PWM_PIN
+        # GPIO.setup(SERVO_PWM_PIN, GPIO.OUT) # Comment out
+        self.pin = SERVO_PWM_PIN # This can stay, it's just a variable
         self.current_position = 0 # Assume starts at 0, or read actual initial position if possible
         # self.target_position = 0 # Not strictly needed if set_position manages targets
         
@@ -21,9 +21,9 @@ class ServoController:
         self.max_angle = 80  # Physical max angle of servo/forklift (example)
         
         # PWM setup
-        self.pwm = GPIO.PWM(self.pin, 50)  # 50 Hz PWM frequency
-        self.pwm.start(self._angle_to_duty_cycle(self.current_position)) # Start PWM at current/initial position
-        logger.info(f"ServoController initialized. Current position assumed/set to: {self.current_position:.2f} degrees.")
+        # self.pwm = GPIO.PWM(self.pin, 50)  # Comment out # 50 Hz PWM frequency
+        # self.pwm.start(self._angle_to_duty_cycle(self.current_position)) # Comment out # Start PWM at current/initial position
+        logger.info(f"ServoController initialized (GPIO PARTIALLY MOCKED). Current position assumed/set to: {self.current_position:.2f} degrees.")
 
     def _angle_to_duty_cycle(self, angle: float) -> float:
         """Converts an angle (0-180 nominally) to a PWM duty cycle (2.5-12.5 for SG90 type servos)."""
@@ -34,13 +34,13 @@ class ServoController:
     def set_position(self, target_angle: float, blocking: bool = True):
         """Set servo to target_angle, moving smoothly in steps."""
         target_angle = max(self.min_angle, min(self.max_angle, target_angle))
-        logger.info(f"Servo: Moving from {self.current_position:.2f} to {target_angle:.2f} degrees.")
+        logger.info(f"Servo (MOCKED): Moving from {self.current_position:.2f} to {target_angle:.2f} degrees.")
 
         if abs(self.current_position - target_angle) < self.step_degrees / 2.0:
-            logger.debug("Servo: Already at target angle or very close.")
+            logger.debug("Servo (MOCKED): Already at target angle or very close.")
             # Ensure final position is set accurately if slightly off but within step threshold
             if self.current_position != target_angle:
-                 self.pwm.ChangeDutyCycle(self._angle_to_duty_cycle(target_angle))
+                 # self.pwm.ChangeDutyCycle(self._angle_to_duty_cycle(target_angle)) # Comment out
                  self.current_position = target_angle
             return
 
@@ -61,7 +61,7 @@ class ServoController:
                (direction == -1 and next_step_angle < target_angle):
                 next_step_angle = target_angle
             
-            self.pwm.ChangeDutyCycle(self._angle_to_duty_cycle(next_step_angle))
+            # self.pwm.ChangeDutyCycle(self._angle_to_duty_cycle(next_step_angle)) # Comment out
             self.current_position = next_step_angle
             # logger.debug(f"Servo step: {self.current_position:.2f}") # Optional: log each step
             if blocking:
@@ -73,7 +73,7 @@ class ServoController:
         
         # Ensure final position is precisely set
         if self.current_position != target_angle:
-             self.pwm.ChangeDutyCycle(self._angle_to_duty_cycle(target_angle))
+             # self.pwm.ChangeDutyCycle(self._angle_to_duty_cycle(target_angle)) # Comment out
              self.current_position = target_angle
 
         # Allow servo to reach the position and then stop PWM signal to prevent jitter
@@ -86,18 +86,18 @@ class ServoController:
             final_settle_delay = max(self.step_delay_seconds, 0.1) # Ensure at least 0.1s
             time.sleep(final_settle_delay)
         
-        self.pwm.ChangeDutyCycle(0) # Stop sending PWM signal pulses
+        # self.pwm.ChangeDutyCycle(0) # Comment out # Stop sending PWM signal pulses
 
-        logger.info(f"Servo: Reached target position {self.current_position:.2f} degrees. PWM signal stopped to prevent jitter.")
+        logger.info(f"Servo (MOCKED): Reached target position {self.current_position:.2f} degrees. PWM signal stopped to prevent jitter.")
     
     def go_to_down_position(self, blocking: bool = True):
         """Move servo to the predefined FORK_DOWN_POSITION."""
-        logger.info("Servo: Moving to FORK_DOWN_POSITION.")
+        logger.info("Servo (MOCKED): Moving to FORK_DOWN_POSITION.")
         self.set_position(FORK_DOWN_POSITION, blocking=blocking)
 
     def go_to_up_position(self, blocking: bool = True):
         """Move servo to the predefined FORK_UP_POSITION."""
-        logger.info("Servo: Moving to FORK_UP_POSITION.")
+        logger.info("Servo (MOCKED): Moving to FORK_UP_POSITION.")
         self.set_position(FORK_UP_POSITION, blocking=blocking)
 
     def get_position(self) -> float:
@@ -110,5 +110,6 @@ class ServoController:
     
     def cleanup(self):
         """Clean up GPIO resources"""
-        self.pwm.stop()
-        GPIO.cleanup([self.pin]) 
+        # self.pwm.stop() # Comment out
+        # GPIO.cleanup([self.pin]) # Comment out
+        logger.info("Servo (MOCKED): Cleanup called.") 
