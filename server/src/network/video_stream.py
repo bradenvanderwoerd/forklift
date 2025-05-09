@@ -179,18 +179,36 @@ class VideoStreamer:
                                 self.dist_coeffs
                             )
 
-                            # Draw axes for each marker
                             for i in range(len(ids)):
                                 rvec = rvecs[i]
                                 tvec = tvecs[i]
+                                current_id = ids[i][0]
+
+                                # Identify the marker based on config
+                                marker_name = "Unknown"
+                                if current_id == config.MARKER_ID_WHITE_BOX:
+                                    marker_name = "White Box"
+                                elif current_id == config.MARKER_ID_BLACK_BOX:
+                                    marker_name = "Black Box"
+                                elif current_id == config.MARKER_ID_WHITE_BOX_DESTINATION:
+                                    marker_name = "White Box Destination"
+                                elif current_id == config.MARKER_ID_BLACK_BOX_DESTINATION:
+                                    marker_name = "Black Box Destination"
+                                elif config.MARKER_ID_NAVIGATION_AID != -1 and current_id == config.MARKER_ID_NAVIGATION_AID:
+                                    marker_name = "Navigation Aid"
+
+                                if marker_name != "Unknown":
+                                    logger.info(f"Identified Target: {marker_name} (ID: {current_id}), tvec: {tvec.flatten().round(3)}, rvec: {rvec.flatten().round(3)}")
+                                else:
+                                    # Log other detected markers at DEBUG level if not a target
+                                    logger.debug(f"Detected non-target ArUco ID: {current_id}, tvec: {tvec.flatten().round(3)}, rvec: {rvec.flatten().round(3)}")
+                                
+                                # Draw axes for each marker
                                 cv2.drawFrameAxes(frame_display, 
                                                   self.camera_matrix, 
                                                   self.dist_coeffs, 
                                                   rvec, tvec, 
                                                   self.marker_actual_size_m * 0.5) # Length of axis
-                                
-                                # You can log or use rvec/tvec here for navigation later
-                                # logger.debug(f"Marker ID: {ids[i][0]}, tvec: {tvec.flatten()}, rvec: {rvec.flatten()}")
 
                         except cv2.error as e:
                             logger.error(f"OpenCV error during pose estimation or drawing: {e}")
