@@ -181,10 +181,10 @@ class NavigationController:
         if not self.is_centered(target_x_cam):
             logger.debug(f"Nav: Turning. X_err: {target_x_cam:.3f}, TurnEffort: {turning_effort:.2f}, TurnSpeed: {turn_speed:.2f}")
             self.motor_controller.stop() # Stop forward movement while turning sharply
-            if turn_speed > 0: # Positive turn_speed (marker to left, PID error was positive)
-                self.motor_controller.turn_left(abs(turn_speed))
-            else: # Negative turn_speed (marker to right, PID error was negative)
-                self.motor_controller.turn_right(abs(turn_speed))
+            if turn_speed > 0: # Positive turn_speed (marker to left, PID error positive), but turn_left() in MC goes right
+                self.motor_controller.turn_right(abs(turn_speed)) # Call turn_right to achieve physical left turn
+            else: # Negative turn_speed (marker to right, PID error negative), but turn_right() in MC goes left
+                self.motor_controller.turn_left(abs(turn_speed))  # Call turn_left to achieve physical right turn
         elif not self.is_at_distance(current_distance_cam):
             logger.debug(f"Nav: Driving. Z_err: {(current_distance_cam - self.target_approach_distance_m):.3f}, DistEffort: {distance_effort:.2f}, FwdSpeed: {forward_speed:.2f}")
             if forward_speed > 0: # Positive forward_speed means move forward
