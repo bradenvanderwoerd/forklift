@@ -16,15 +16,15 @@ VIDEO_HEIGHT = 480 # From old config.py
 VIDEO_FPS = 30     # From old config.py
 
 # --- ArUco Marker Configuration ---
-ARUCO_DICTIONARY = cv2.aruco.DICT_7X7_250
+ARUCO_DICTIONARY = cv2.aruco.DICT_6X6_50
 ARUCO_MARKER_SIZE_METERS = 0.0226  # 22.6mm
 
-# Target Marker IDs (Placeholders - replace with actual IDs when known)
-MARKER_ID_WHITE_BOX = -1
-MARKER_ID_BLACK_BOX = -1
-MARKER_ID_WHITE_BOX_DESTINATION = -1
-MARKER_ID_BLACK_BOX_DESTINATION = -1
-MARKER_ID_NAVIGATION_AID = -1
+# Target Marker IDs
+MARKER_ID_WHITE_BOX = 5
+MARKER_ID_BLACK_BOX = 6
+MARKER_ID_WHITE_BOX_DESTINATION = 1
+MARKER_ID_BLACK_BOX_DESTINATION = 2
+MARKER_ID_NAVIGATION_AID = -1 # Placeholder for unknown arena marker
 
 # --- Camera Calibration ---
 CAMERA_CALIBRATION_FILE_PATH = "server/src/camera_calibration.npz"
