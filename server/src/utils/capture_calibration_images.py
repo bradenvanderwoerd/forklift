@@ -6,7 +6,7 @@ from picamera2 import Picamera2
 # --- Configuration ---
 SAVE_DIR = "../calibration_images"  # Relative to this script's location
 IMAGE_PREFIX = "calib_img_"
-RESOLUTION = (1280, 720) # Use a reasonable resolution
+RESOLUTION = (640, 480) # Changed to 640x480
 FRAME_RATE = 30
 WAIT_TIME_MS = 30 # Delay between frames in preview loop (milliseconds)
 # -------------------
@@ -50,10 +50,14 @@ def main():
 
             if key == ord(' '): # Space bar pressed
                 img_name = os.path.join(save_path, f"{IMAGE_PREFIX}{img_counter:02d}.jpg")
-                # Save the original RGB frame from camera for better quality
-                rgb_frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                cv2.imwrite(img_name, rgb_frame_bgr)
-                print(f"Image captured: {img_name}")
+                
+                # Rotate the frame 180 degrees to make it right-side up before saving
+                rotated_frame = cv2.rotate(frame, cv2.ROTATE_180)
+                
+                # Convert the rotated RGB frame to BGR for OpenCV imwrite
+                bgr_frame_to_save = cv2.cvtColor(rotated_frame, cv2.COLOR_RGB2BGR)
+                cv2.imwrite(img_name, bgr_frame_to_save)
+                print(f"Image captured: {img_name} (rotated 180)")
                 img_counter += 1
             elif key == ord('q'): # 'q' pressed
                 print("Quitting capture.")
