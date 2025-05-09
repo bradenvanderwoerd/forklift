@@ -73,7 +73,7 @@ NAV_DISTANCE_PID_KP = 150.0 # Proportional gain (higher means faster approach)
 NAV_DISTANCE_PID_KI = 2.0   # Integral gain
 NAV_DISTANCE_PID_KD = 5.0  # Derivative gain
 
-NAV_MAX_TURNING_SPEED = 25       # Max speed for AUTONOMOUS turning actions (0-100 for motor controller)
+NAV_MAX_TURNING_SPEED = 10       # Max speed for AUTONOMOUS turning actions (0-100 for motor controller)
 MANUAL_TURN_SPEED = 20           # Fixed speed for MANUAL turning actions (0-100 for motor controller)
 NAV_MAX_FORWARD_SPEED = 50       # Max speed for forward/backward actions (0-100)
 NAV_MIN_EFFECTIVE_SPEED = 25     # Minimum speed to ensure motors engage if PID output is too low but error exists
