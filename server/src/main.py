@@ -32,7 +32,10 @@ def check_port_availability(port: int) -> bool:
 
 class ForkliftServer:
     def __init__(self):
-        """Initialize server components"""
+        # GPIO setup - Call setmode and setwarnings once globally here
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setwarnings(False)
+
         self.running = True
         self.cleanup_lock = threading.Lock()
         self.cleanup_complete = threading.Event()
@@ -158,19 +161,13 @@ class ForkliftServer:
             self.running = False
     
     def _handle_shutdown(self, signum, frame):
-        """Handle shutdown signal
-        
-        Args:
-            signum: Signal number
-            frame: Current stack frame
-        """
-        logger.info(f"\nShutdown signal {signum} received...")
+        """Handle shutdown signal"""
+        logger.info(f"\nShutdown signal {signum} received. Telling main loop to stop...")
         self.running = False
-        self.cleanup()
-        # Wait for cleanup to complete
-        if not self.cleanup_complete.wait(timeout=5.0):
-            logger.warning("Cleanup did not complete in time")
-        sys.exit(0)
+        # self.cleanup() # Removed direct call from here
+        # if not self.cleanup_complete.wait(timeout=5.0): # Removed wait from here
+        #     logger.warning("Cleanup did not complete in time from signal handler")
+        # sys.exit(0) # Avoid calling sys.exit from a signal handler in a threaded app if possible
     
     def start(self):
         """Start server components"""
@@ -179,20 +176,23 @@ class ForkliftServer:
         logger.info(f"Video server will listen on {HOST}:{VIDEO_PORT}")
         
         try:
-            # Start servers in separate threads
             self.video_thread.start()
             self.command_thread.start()
             
-            # Main loop
             while self.running:
-                time.sleep(0.1)  # Reduced sleep time for more responsive shutdown
+                time.sleep(0.1)
                 
         except KeyboardInterrupt:
-            logger.info("\nKeyboard interrupt received...")
-            self.running = False
+            logger.info("\nKeyboard interrupt (Ctrl+C) received. Initiating shutdown...")
+            self.running = False # Ensure running is false, though signal handler should also do this
         finally:
-            self.cleanup()
-    
+            logger.info("Main loop terminated. Proceeding to cleanup...")
+            self.cleanup() # Primary call to cleanup
+            # Wait for cleanup to complete before exiting application context
+            if not self.cleanup_complete.wait(timeout=10.0): # Increased timeout
+                logger.warning("Cleanup did not complete in the allotted time.")
+            logger.info("ForkliftServer application shutdown sequence finished.")
+
     def cleanup(self):
         """Clean up resources"""
         if not self.cleanup_lock.acquire(blocking=False):

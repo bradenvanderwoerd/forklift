@@ -8,8 +8,6 @@ logger = logging.getLogger(__name__)
 
 class ServoController:
     def __init__(self):
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setwarnings(False)
         GPIO.setup(SERVO_PIN, GPIO.OUT)
         self.pin = SERVO_PIN
         self.current_position = 0

@@ -35,9 +35,8 @@ class PIDController:
 
 class MotorController:
     def __init__(self):
-        # GPIO setup
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setwarnings(False)
+        # GPIO.setmode(GPIO.BCM) # Removed
+        # GPIO.setwarnings(False) # Removed
         
         # Motor pins from config
         self.MOTOR1_PIN1 = MOTOR_PINS['left_forward']
