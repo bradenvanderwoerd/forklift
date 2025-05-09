@@ -1,8 +1,3 @@
-import sys
-import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 import signal
 import sys
 import time
@@ -17,7 +12,7 @@ from controllers.motor import MotorController
 from controllers.servo import ServoController
 from network.video_stream import VideoStreamer
 from network.tcp_server import CommandServer
-from config import HOST, COMMAND_PORT, VIDEO_PORT, SERVO_PIN
+from utils.config import HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, SERVO_PWM_PIN
 
 # Set up logging
 logging.basicConfig(
@@ -46,11 +41,11 @@ class ForkliftServer:
         self.cleanup_complete = threading.Event()
         
         # Check port availability
-        if not check_port_availability(COMMAND_PORT):
-            logger.error(f"Command port {COMMAND_PORT} is already in use!")
+        if not check_port_availability(SERVER_TCP_PORT):
+            logger.error(f"Command port {SERVER_TCP_PORT} is already in use!")
             sys.exit(1)
-        if not check_port_availability(VIDEO_PORT):
-            logger.error(f"Video port {VIDEO_PORT} is already in use!")
+        if not check_port_availability(SERVER_VIDEO_UDP_PORT):
+            logger.error(f"Video port {SERVER_VIDEO_UDP_PORT} is already in use!")
             sys.exit(1)
         
         # Initialize hardware controllers
@@ -177,8 +172,8 @@ class ForkliftServer:
     def start(self):
         """Start server components"""
         logger.info("Starting server...")
-        logger.info(f"Command server will listen on {HOST}:{COMMAND_PORT}")
-        logger.info(f"Video server will listen on {HOST}:{VIDEO_PORT}")
+        logger.info(f"Command server will listen on {HOST}:{SERVER_TCP_PORT}")
+        logger.info(f"Video server will listen on {HOST}:{SERVER_VIDEO_UDP_PORT}")
         
         try:
             self.video_thread.start()
