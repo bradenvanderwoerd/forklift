@@ -22,8 +22,12 @@ class ServoController:
         
         # PWM setup
         self.pwm = GPIO.PWM(self.pin, 50)  # Uncomment 
-        self.pwm.start(self._angle_to_duty_cycle(self.current_position)) # Uncomment
-        logger.info(f"ServoController initialized. Current position assumed/set to: {self.current_position:.2f} degrees.") # Revert log
+        # Initialize to starting position, then stop PWM to prevent initial jitter
+        initial_duty_cycle = self._angle_to_duty_cycle(self.current_position)
+        self.pwm.start(initial_duty_cycle) 
+        time.sleep(0.5) # Allow time for servo to reach initial position
+        self.pwm.stop() 
+        logger.info(f"ServoController initialized. Position set to: {self.current_position:.2f} degrees. PWM stopped.")
 
     def _angle_to_duty_cycle(self, angle: float) -> float:
         """Converts an angle (0-180 nominally) to a PWM duty cycle (2.5-12.5 for SG90 type servos)."""
@@ -36,12 +40,22 @@ class ServoController:
         target_angle = max(self.min_angle, min(self.max_angle, target_angle))
         logger.info(f"Servo: Moving from {self.current_position:.2f} to {target_angle:.2f} degrees.") # Revert log
 
+        # Start PWM at current known position. This ensures it's active for ChangeDutyCycle.
+        # If we are already at target, we'll stop it shortly.
+        self.pwm.start(self._angle_to_duty_cycle(self.current_position))
+
         if abs(self.current_position - target_angle) < self.step_degrees / 2.0:
             logger.debug("Servo: Already at target angle or very close.") # Revert log
-            # Ensure final position is set accurately if slightly off but within step threshold
             if self.current_position != target_angle:
-                 self.pwm.ChangeDutyCycle(self._angle_to_duty_cycle(target_angle)) # Uncomment
+                 # Briefly ensure it's at the precise target_angle if slightly off
+                 self.pwm.ChangeDutyCycle(self._angle_to_duty_cycle(target_angle))
                  self.current_position = target_angle
+                 if blocking: # Allow this micro-adjustment to complete
+                     time.sleep(max(self.step_delay_seconds, 0.05)) 
+            if blocking: # Add a small settle time even if no significant move
+                time.sleep(max(self.step_delay_seconds, 0.05))
+            self.pwm.stop() # Stop PWM
+            logger.info(f"Servo: At target {self.current_position:.2f}. PWM stopped.")
             return
 
         # Determine direction and number of steps
@@ -66,10 +80,6 @@ class ServoController:
             # logger.debug(f"Servo step: {self.current_position:.2f}") # Optional: log each step
             if blocking:
                 time.sleep(self.step_delay_seconds)
-            else:
-                # For non-blocking, we might need a different approach to manage updates
-                # For now, set_position will be effectively blocking due to the loop
-                pass 
         
         # Ensure final position is precisely set
         if self.current_position != target_angle:
@@ -83,12 +93,11 @@ class ServoController:
         if blocking:
             # Use a slightly longer delay for final settling if step_delay is very small,
             # otherwise, the step_delay itself should be sufficient.
-            final_settle_delay = max(self.step_delay_seconds, 0.1) # Ensure at least 0.1s
+            final_settle_delay = max(self.step_delay_seconds, 0.3) # Ensure at least 0.3s (was 0.1s)
             time.sleep(final_settle_delay)
         
-        self.pwm.ChangeDutyCycle(0) # Uncomment 
-
-        logger.info(f"Servo: Reached target position {self.current_position:.2f} degrees. PWM signal stopped to prevent jitter.") # Revert log
+        self.pwm.stop() # Stop PWM signal pulses
+        logger.info(f"Servo: Reached target position {self.current_position:.2f} degrees. PWM stopped.") # Revert log
     
     def go_to_down_position(self, blocking: bool = True):
         """Move servo to the predefined FORK_DOWN_POSITION."""
@@ -110,6 +119,10 @@ class ServoController:
     
     def cleanup(self):
         """Clean up GPIO resources"""
-        self.pwm.stop() # Uncomment
+        # Ensure PWM is stopped before cleaning up GPIO
+        try:
+            self.pwm.stop()
+        except Exception: # pwm might not be initialized if __init__ failed
+            pass 
         GPIO.cleanup([self.pin]) # Uncomment
-        logger.info("Servo: Cleanup called.") # Revert log 
+        logger.info("Servo: Cleanup called. PWM stopped and GPIO cleaned.") # Revert log 
