@@ -23,7 +23,7 @@ MOTOR_PINS = {
 }
 MOTOR1_PWM = 17  # Left motor speed
 MOTOR2_PWM = 24  # Right motor speed
-SERVO_PIN = 25  # Servo PWM pin
+SERVO_PIN = 13  # Servo PWM pin
 
 # Control configuration
 MAX_SPEED = 100
