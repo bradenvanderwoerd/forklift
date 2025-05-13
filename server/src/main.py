@@ -74,6 +74,7 @@ class ForkliftServer:
         self.command_server.register_handler('motor', self._handle_motor_command)
         self.command_server.register_handler('servo', self._handle_servo_command)
         self.command_server.register_handler('stop', self._handle_emergency_stop)
+        self.command_server.register_handler('set_speed', self._handle_set_speed_command)
     
     def _handle_drive_command(self, data: Dict[str, Any]):
         logger.info("--- _handle_drive_command ENTERED ---")
@@ -143,6 +144,13 @@ class ForkliftServer:
         logger.info(f"--- _handle_emergency_stop ENTERED --- Data: {data}")
         self.motor_controller.stop()
         # self.servo_controller.set_position(0) # Removed servo reset from general stop command
+    
+    def _handle_set_speed_command(self, data: Dict[str, Any]):
+        """Handle set_speed command"""
+        logger.info(f"Received SET_SPEED command: {data}")
+        speed = data.get('value', 50)  # Default to 50 if not specified
+        self.motor_controller.set_speed(speed)
+        logger.info(f"Motor speed set to: {speed}")
     
     def _run_video_server(self):
         """Run video server in a separate thread"""

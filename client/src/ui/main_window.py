@@ -267,7 +267,7 @@ class MainWindow(QMainWindow):
     def on_speed_change(self, value):
         self.current_speed = value
         if self.is_connected:
-            self.robot_client.send_command("set_speed", value)
+            self.robot_client.send_command("set_speed", {"value": value})
             
     def update_video(self):
         if self.is_connected:
