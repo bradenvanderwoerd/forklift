@@ -27,4 +27,25 @@ SERVO_PIN = 13  # Servo PWM pin
 
 # Control configuration
 MAX_SPEED = 100
+MAX_STEERING = 100
+MAX_SERVO_ANGLE = 38  # Maximum servo angle in degrees
+
+# Video configuration
+VIDEO_WIDTH = 640
+VIDEO_HEIGHT = 480
+VIDEO_FPS = 30
+
+# Hardware configuration
+MOTOR_PINS = {
+    'left_forward': 5,
+    'left_backward': 6,
+    'right_forward': 22,
+    'right_backward': 23
+}
+MOTOR1_PWM = 17  # Left motor speed
+MOTOR2_PWM = 24  # Right motor speed
+SERVO_PIN = 13  # Servo PWM pin
+
+# Control configuration
+MAX_SPEED = 100
 MAX_STEERING = 100 

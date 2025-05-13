@@ -53,8 +53,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Forklift Control")
-        self.setMinimumSize(1200, 680)  # Increased width for two cameras
-        self.resize(1200, 680)
+        self.setMinimumSize(800, 680)  # Reduced width since we only have one camera
+        self.resize(800, 680)
         
         # Initialize clients
         self.robot_client = RobotClient()
@@ -68,29 +68,68 @@ class MainWindow(QMainWindow):
         # Video display container
         video_container = QWidget()
         video_layout = QHBoxLayout(video_container)
+        video_layout.setContentsMargins(0, 0, 0, 0)
         
         # Pi camera display
         pi_camera_container = QWidget()
         pi_camera_layout = QVBoxLayout(pi_camera_container)
+        pi_camera_layout.setContentsMargins(0, 0, 0, 0)
+        
+        pi_camera_header = QWidget()
+        pi_camera_header_layout = QHBoxLayout(pi_camera_header)
+        pi_camera_header_layout.setContentsMargins(0, 0, 0, 0)
         pi_camera_label = QLabel("Pi Camera")
         pi_camera_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pi_camera_header_layout.addWidget(pi_camera_label)
+        pi_camera_layout.addWidget(pi_camera_header)
+        
         self.video_label = QLabel()
         self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_label.setMinimumHeight(480)
-        pi_camera_layout.addWidget(pi_camera_label)
         pi_camera_layout.addWidget(self.video_label)
         video_layout.addWidget(pi_camera_container)
         
         # Warehouse camera display
         warehouse_camera_container = QWidget()
         warehouse_camera_layout = QVBoxLayout(warehouse_camera_container)
+        warehouse_camera_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Warehouse camera header with time
+        warehouse_header = QWidget()
+        warehouse_header_layout = QHBoxLayout(warehouse_header)
+        warehouse_header_layout.setContentsMargins(0, 0, 0, 0)
         warehouse_camera_label = QLabel("Warehouse Camera")
         warehouse_camera_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        warehouse_header_layout.addWidget(warehouse_camera_label)
+        warehouse_camera_layout.addWidget(warehouse_header)
+        
+        # Create a container for the video with overlay
+        video_overlay_container = QWidget()
+        video_overlay_layout = QVBoxLayout(video_overlay_container)
+        video_overlay_layout.setContentsMargins(0, 0, 0, 0)
+        
         self.warehouse_video_label = QLabel()
         self.warehouse_video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.warehouse_video_label.setMinimumHeight(480)
-        warehouse_camera_layout.addWidget(warehouse_camera_label)
-        warehouse_camera_layout.addWidget(self.warehouse_video_label)
+        video_overlay_layout.addWidget(self.warehouse_video_label)
+        
+        # Create time overlay
+        self.warehouse_time_label = QLabel("--")
+        self.warehouse_time_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        self.warehouse_time_label.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                font-weight: bold;
+                color: white;
+                padding: 8px 12px;
+                background-color: rgba(0, 0, 0, 0.7);
+                border-radius: 4px;
+                margin: 8px;
+            }
+        """)
+        video_overlay_layout.addWidget(self.warehouse_time_label, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        
+        warehouse_camera_layout.addWidget(video_overlay_container)
         video_layout.addWidget(warehouse_camera_container)
         
         layout.addWidget(video_container, stretch=2)
@@ -254,5 +293,9 @@ class MainWindow(QMainWindow):
                 scaled_pixmap = pixmap.scaled(self.warehouse_video_label.size(), 
                                             Qt.AspectRatioMode.KeepAspectRatio,
                                             Qt.TransformationMode.SmoothTransformation)
-                self.warehouse_video_label.setPixmap(scaled_pixmap) 
-                self.video_label.setPixmap(scaled_pixmap) 
+                self.warehouse_video_label.setPixmap(scaled_pixmap)
+            
+            # Update warehouse time
+            warehouse_time = self.warehouse_client.get_warehouse_time()
+            if warehouse_time is not None:
+                self.warehouse_time_label.setText(f"{warehouse_time:.3f}s") 
