@@ -5,6 +5,7 @@ from PyQt6.QtGui import QImage, QPixmap, QKeyEvent
 import cv2
 import numpy as np
 from src.network.client import RobotClient
+from src.network.warehouse_client import WarehouseCameraClient
 
 class KeyDisplay(QLabel):
     def __init__(self, key_text, width=35, height=35):
@@ -52,22 +53,47 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Forklift Control")
-        self.setMinimumSize(660, 680)
-        self.resize(660, 680)
+        self.setMinimumSize(1200, 680)  # Increased width for two cameras
+        self.resize(1200, 680)
         
-        # Initialize robot client
+        # Initialize clients
         self.robot_client = RobotClient()
+        self.warehouse_client = WarehouseCameraClient()
         
         # Create central widget and layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
         
-        # Video display
+        # Video display container
+        video_container = QWidget()
+        video_layout = QHBoxLayout(video_container)
+        
+        # Pi camera display
+        pi_camera_container = QWidget()
+        pi_camera_layout = QVBoxLayout(pi_camera_container)
+        pi_camera_label = QLabel("Pi Camera")
+        pi_camera_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_label = QLabel()
         self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_label.setMinimumHeight(480)
-        layout.addWidget(self.video_label, stretch=2)
+        pi_camera_layout.addWidget(pi_camera_label)
+        pi_camera_layout.addWidget(self.video_label)
+        video_layout.addWidget(pi_camera_container)
+        
+        # Warehouse camera display
+        warehouse_camera_container = QWidget()
+        warehouse_camera_layout = QVBoxLayout(warehouse_camera_container)
+        warehouse_camera_label = QLabel("Warehouse Camera")
+        warehouse_camera_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.warehouse_video_label = QLabel()
+        self.warehouse_video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.warehouse_video_label.setMinimumHeight(480)
+        warehouse_camera_layout.addWidget(warehouse_camera_label)
+        warehouse_camera_layout.addWidget(self.warehouse_video_label)
+        video_layout.addWidget(warehouse_camera_container)
+        
+        layout.addWidget(video_container, stretch=2)
         
         # Control panel
         control_panel = QWidget()
@@ -96,19 +122,19 @@ class MainWindow(QMainWindow):
         self.space_key = KeyDisplay("SPACE", width=120, height=35)
         
         # Create key displays for Servo Up/Down Arrows
-        self.up_arrow_key = KeyDisplay("↑") # Up arrow symbol
-        self.down_arrow_key = KeyDisplay("↓") # Down arrow symbol
+        self.up_arrow_key = KeyDisplay("↑")
+        self.down_arrow_key = KeyDisplay("↓")
         
         # Add WASD keys to grid
         wasd_layout.addWidget(self.w_key, 0, 1)
         wasd_layout.addWidget(self.a_key, 1, 0)
         wasd_layout.addWidget(self.s_key, 1, 1)
         wasd_layout.addWidget(self.d_key, 1, 2)
-        wasd_layout.addWidget(self.space_key, 2, 0, 1, 3) # Spans 3 columns
-
-        # Add Servo Up/Down keys to grid (to the right of D key)
-        wasd_layout.addWidget(self.up_arrow_key, 0, 3) # Row 0, Col 3
-        wasd_layout.addWidget(self.down_arrow_key, 1, 3) # Row 1, Col 3
+        wasd_layout.addWidget(self.space_key, 2, 0, 1, 3)
+        
+        # Add Servo Up/Down keys to grid
+        wasd_layout.addWidget(self.up_arrow_key, 0, 3)
+        wasd_layout.addWidget(self.down_arrow_key, 1, 3)
         
         # Center the WASD & Servo key grid
         key_grid_widget = QWidget()
@@ -187,10 +213,12 @@ class MainWindow(QMainWindow):
     def toggle_connection(self):
         if not self.is_connected:
             self.robot_client.connect()
+            self.warehouse_client.connect()
             self.connect_button.setText("Disconnect")
             self.is_connected = True
         else:
             self.robot_client.disconnect()
+            self.warehouse_client.disconnect()
             self.connect_button.setText("Connect")
             self.is_connected = False
             
@@ -204,16 +232,27 @@ class MainWindow(QMainWindow):
             
     def update_video(self):
         if self.is_connected:
-            frame = self.robot_client.get_video_frame()
-            if frame is not None:
-                # Convert frame to QImage
-                height, width, channel = frame.shape
+            # Update Pi camera feed
+            pi_frame = self.robot_client.get_video_frame()
+            if pi_frame is not None:
+                height, width, channel = pi_frame.shape
                 bytes_per_line = 3 * width
-                q_image = QImage(frame.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
+                q_image = QImage(pi_frame.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
                 pixmap = QPixmap.fromImage(q_image)
-                
-                # Scale pixmap to fit label while maintaining aspect ratio
                 scaled_pixmap = pixmap.scaled(self.video_label.size(), 
                                             Qt.AspectRatioMode.KeepAspectRatio,
                                             Qt.TransformationMode.SmoothTransformation)
+                self.video_label.setPixmap(scaled_pixmap)
+            
+            # Update warehouse camera feed
+            warehouse_frame = self.warehouse_client.get_video_frame()
+            if warehouse_frame is not None:
+                height, width, channel = warehouse_frame.shape
+                bytes_per_line = 3 * width
+                q_image = QImage(warehouse_frame.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
+                pixmap = QPixmap.fromImage(q_image)
+                scaled_pixmap = pixmap.scaled(self.warehouse_video_label.size(), 
+                                            Qt.AspectRatioMode.KeepAspectRatio,
+                                            Qt.TransformationMode.SmoothTransformation)
+                self.warehouse_video_label.setPixmap(scaled_pixmap) 
                 self.video_label.setPixmap(scaled_pixmap) 
