@@ -148,7 +148,8 @@ class ForkliftServer:
     def _handle_set_speed_command(self, data: Dict[str, Any]):
         """Handle set_speed command"""
         logger.info(f"Received SET_SPEED command: {data}")
-        speed = data.get('value', 50)  # Default to 50 if not specified
+        # Extract speed from the nested value structure
+        speed = data.get('value', {}).get('value', 50)  # Default to 50 if not specified
         self.motor_controller.set_speed(speed)
         logger.info(f"Motor speed set to: {speed}")
     
