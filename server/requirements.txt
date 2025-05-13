@@ -1,5 +1,6 @@
 # Hardware control
 RPi.GPIO==0.7.1
+pigpio>=1.78  # Hardware PWM support
 
 # Camera and image processing
 opencv-python>=4.8.0
