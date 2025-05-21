@@ -219,7 +219,8 @@ class WarehouseCameraClient:
                         self._handle_connection_error() # Or just continue if timeout is expected
                         continue
                     except (ValueError, UnicodeDecodeError) as e:
-                        logger.error(f"Error parsing image size '{img_size_str_bytes.decode(errors="ignore")}': {e}")
+                        decoded_bytes_for_log = img_size_str_bytes.decode(errors="ignore")
+                        logger.error(f"Error parsing image size '{decoded_bytes_for_log}': {e}")
                         self._handle_connection_error()
                         continue
                     except ConnectionError as e: # From explicit raise
