@@ -33,7 +33,7 @@ class OverheadStreamer:
                 # For simplicity, assuming queue won't be full if clients are responsive
                 q.put_nowait(self.external_frame) 
             except asyncio.QueueFull:
-                logger.warning(f"OverheadStreamer: Client queue full for {q}. Frame dropped for this client.")
+                logger.warning(f"OverheadStreamer: Client queue (id: {id(q)}, maxsize: {q.maxsize}) full. Frame dropped for this client.")
             except Exception as e:
                 logger.error(f"OverheadStreamer: Error putting frame to queue for client {q}: {e}")
 
