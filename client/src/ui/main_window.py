@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QSlider, QGridLayout, QSizePolicy,
                              QFormLayout, QGroupBox, QLineEdit)
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QEvent
 from PyQt6.QtGui import QImage, QPixmap, QKeyEvent, QDoubleValidator
 import cv2
 import numpy as np
@@ -59,6 +59,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Forklift Control - Dual View")
         self.setMinimumSize(1200, 700) # Adjusted for two feeds + controls
         # self.resize(1200, 700) # Let minimum size dictate initial or use layout policy
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus) # Set focus policy for the main window
+        self.setFocus() # Try to grab focus initially
         
         self.robot_client = RobotClient()
         
@@ -101,6 +103,7 @@ class MainWindow(QMainWindow):
         self.speed_slider = QSlider(Qt.Orientation.Vertical)
         self.speed_slider.setRange(0, 100)
         self.speed_slider.setValue(50)
+        self.speed_slider.setMinimumHeight(200) # Increased minimum height for the slider
         self.speed_slider.valueChanged.connect(self.on_speed_change)
         speed_label = QLabel("Speed")
         speed_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -133,10 +136,22 @@ class MainWindow(QMainWindow):
         self.connect_button = QPushButton("Connect")
         self.connect_button.clicked.connect(self.toggle_connection)
         action_buttons_layout.addWidget(self.connect_button)
+        
         self.autonav_button = QPushButton("Start Auto-Nav")
         self.autonav_button.clicked.connect(self.toggle_autonav)
         self.autonav_button.setEnabled(False)
         action_buttons_layout.addWidget(self.autonav_button)
+        
+        self.set_pickup_button = QPushButton("Set Pickup Pose")
+        self.set_pickup_button.clicked.connect(lambda: self.set_overhead_target_pose("pickup"))
+        self.set_pickup_button.setEnabled(False) # Enable when connected
+        action_buttons_layout.addWidget(self.set_pickup_button)
+        
+        self.set_dropoff_button = QPushButton("Set Dropoff Pose")
+        self.set_dropoff_button.clicked.connect(lambda: self.set_overhead_target_pose("dropoff"))
+        self.set_dropoff_button.setEnabled(False) # Enable when connected
+        action_buttons_layout.addWidget(self.set_dropoff_button)
+        
         self.emergency_button = QPushButton("Emergency Stop")
         self.emergency_button.setStyleSheet("background-color: red; color: white;")
         self.emergency_button.clicked.connect(self.emergency_stop)
@@ -152,6 +167,7 @@ class MainWindow(QMainWindow):
         for param in ["Kp", "Ki", "Kd"]:
             self.turning_pid_inputs[param] = QLineEdit()
             self.turning_pid_inputs[param].setValidator(QDoubleValidator(0, 10000.0, 3))
+            self.turning_pid_inputs[param].editingFinished.connect(self.setFocus) # Re-focus main window
             pid_tuning_layout.addRow(f"Turn {param}:", self.turning_pid_inputs[param])
         self.apply_turning_pid_button = QPushButton("Apply Turning PID")
         self.apply_turning_pid_button.clicked.connect(self.apply_turning_pid_settings)
@@ -160,6 +176,7 @@ class MainWindow(QMainWindow):
         for param in ["Kp", "Ki", "Kd"]:
             self.distance_pid_inputs[param] = QLineEdit()
             self.distance_pid_inputs[param].setValidator(QDoubleValidator(0, 10000.0, 3))
+            self.distance_pid_inputs[param].editingFinished.connect(self.setFocus) # Re-focus main window
             pid_tuning_layout.addRow(f"Dist {param}:", self.distance_pid_inputs[param])
         self.apply_distance_pid_button = QPushButton("Apply Distance PID")
         self.apply_distance_pid_button.clicked.connect(self.apply_distance_pid_settings)
@@ -204,6 +221,8 @@ class MainWindow(QMainWindow):
             self.connect_button.setText("Disconnect")
             self.autonav_button.setEnabled(True)
             if hasattr(self, 'pid_tuning_group'): self.pid_tuning_group.setEnabled(True)
+            self.set_pickup_button.setEnabled(True)   # Enable on connect
+            self.set_dropoff_button.setEnabled(True) # Enable on connect
             self.is_connected = True # Assume connection success for UI feedback
             logger.info("CLIENT: Connect button pressed. RobotClient.connect() called.")
         else:
@@ -213,6 +232,8 @@ class MainWindow(QMainWindow):
             self.connect_button.setText("Connect")
             self.autonav_button.setEnabled(False)
             if hasattr(self, 'pid_tuning_group'): self.pid_tuning_group.setEnabled(False)
+            self.set_pickup_button.setEnabled(False)   # Disable on disconnect
+            self.set_dropoff_button.setEnabled(False) # Disable on disconnect
             self.is_connected = False
             # Clear video feeds on disconnect
             self.onboard_video_label.setText("Disconnected"); self.onboard_video_label.setStyleSheet("background-color: black; color: grey;")
@@ -238,10 +259,11 @@ class MainWindow(QMainWindow):
 
     def on_speed_change(self, value):
         self.current_speed = value
-        # No need to send if in autonav, server should ignore it anyway based on its logic
         if self.is_connected and not self.is_autonav_active:
-            self.robot_client.send_command("drive", {"speed": self.current_speed, "action": "UPDATE_SPEED_ONLY"}) # Assuming server handles this
-            logger.debug(f"CLIENT: Speed slider changed to {self.current_speed}")
+            # Send a specific command for speed slider changes
+            self.robot_client.send_command("SET_SPEED", {"value": self.current_speed})
+            logger.debug(f"CLIENT: Speed slider changed to {self.current_speed}. Sent SET_SPEED command.")
+        self.setFocus() # Ensure main window regains focus after slider interaction
 
     def _update_single_video_feed(self, frame: Optional[np.ndarray], label: QLabel, feed_name: str):
         if frame is not None:
@@ -269,6 +291,7 @@ class MainWindow(QMainWindow):
             self.robot_client.send_command("SET_NAV_TURNING_PID", payload)
             logger.info(f"CLIENT: Sent SET_NAV_TURNING_PID with {payload}")
         except ValueError: logger.error("Invalid input for turning PID.")
+        self.setFocus() # Re-focus main window after applying
 
     def apply_distance_pid_settings(self):
         if not self.is_connected: return
@@ -277,6 +300,14 @@ class MainWindow(QMainWindow):
             self.robot_client.send_command("SET_NAV_DISTANCE_PID", payload)
             logger.info(f"CLIENT: Sent SET_NAV_DISTANCE_PID with {payload}")
         except ValueError: logger.error("Invalid input for distance PID.")
+        self.setFocus() # Re-focus main window after applying
+
+    def set_overhead_target_pose(self, target_name: str):
+        if not self.is_connected:
+            logger.warning("Cannot set target pose: Not connected.")
+            return
+        self.robot_client.send_command("SET_OVERHEAD_TARGET", {"target_name": target_name})
+        logger.info(f"CLIENT: Sent SET_OVERHEAD_TARGET for '{target_name}'")
 
     def closeEvent(self, event):
         logger.info("CLIENT: MainWindow closeEvent triggered. Disconnecting client.")

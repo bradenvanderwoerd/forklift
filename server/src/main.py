@@ -8,6 +8,7 @@ import logging
 import asyncio
 import RPi.GPIO as GPIO
 import math
+import json # Added for JSON operations
 
 from .controllers.motor import MotorController
 from .controllers.servo import ServoController
@@ -22,7 +23,8 @@ from .utils.config import (
     OVERHEAD_VIDEO_WEBSOCKET_PORT,
     SERVO_PWM_PIN, MANUAL_TURN_SPEED, FORK_DOWN_POSITION, FORK_UP_POSITION,
     AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, AUTONAV_FORK_CARRY_ANGLE,
-    OVERHEAD_CAMERA_HOST, OVERHEAD_CAMERA_PORT
+    OVERHEAD_CAMERA_HOST, OVERHEAD_CAMERA_PORT,
+    # Assuming a default file path, can be moved to config.py if preferred
 )
 
 # Set up logging
@@ -42,6 +44,8 @@ AUTONAV_STAGE_NAVIGATING = "NAVIGATING"
 AUTONAV_STAGE_LOWERING_FORKS = "LOWERING_FORKS"
 AUTONAV_STAGE_LIFTING_FORKS = "LIFTING_FORKS"
 # AUTONAV_STAGE_CARRYING_BOX = "CARRYING_BOX" # Future state if needed
+
+OVERHEAD_TARGETS_FILE = "overhead_targets.json" # Define path for targets file
 
 def check_port_availability(port: int, host: str = HOST) -> bool:
     """Check if a port is available for use on a given host."""
@@ -64,7 +68,13 @@ class ForkliftServer:
         self.cleanup_complete = threading.Event()
         self.test_autonav_active = False # Flag for testing autonomous navigation
         self.autonav_stage = AUTONAV_STAGE_IDLE # Current stage of auto-navigation
-        self.robot_overhead_pose: Optional[Tuple[float, float, float]] = None # Ensure type hint matches OverheadLocalizer
+        self.robot_overhead_pose: Optional[Tuple[float, float, float]] = None
+        # Initialize with default structure, will be populated by _load_overhead_target_poses
+        self.overhead_target_poses: Dict[str, Optional[Tuple[float, float, float]]] = {
+            "pickup": None,
+            "dropoff": None
+        }
+        self._load_overhead_target_poses() # Load poses at startup
         
         # Check port availability
         if not check_port_availability(SERVER_TCP_PORT):
@@ -110,12 +120,13 @@ class ForkliftServer:
     def _register_handlers(self):
         """Register command handlers"""
         self.command_server.register_handler('drive', self._handle_drive_command)
-        self.command_server.register_handler('motor', self._handle_motor_command)
         self.command_server.register_handler('servo', self._handle_servo_command)
         self.command_server.register_handler('stop', self._handle_emergency_stop)
         self.command_server.register_handler('TOGGLE_AUTONAV', self._handle_toggle_autonav_command)
         self.command_server.register_handler('SET_NAV_TURNING_PID', self._handle_set_nav_turning_pid)
         self.command_server.register_handler('SET_NAV_DISTANCE_PID', self._handle_set_nav_distance_pid)
+        self.command_server.register_handler('SET_OVERHEAD_TARGET', self._handle_set_overhead_target)
+        self.command_server.register_handler('SET_SPEED', self._handle_set_speed_command)
     
     def _handle_drive_command(self, data: Dict[str, Any]):
         if self.test_autonav_active:
@@ -123,29 +134,27 @@ class ForkliftServer:
             return
         logger.debug(f"Received DRIVE command data: {data}")
         command_value = data.get("value", {})
-        direction = command_value.get("direction", "NONE")
-        speed = command_value.get("speed", 0)
+        direction = command_value.get("direction")
+        speed = command_value.get("speed")
         action = command_value.get("action", "START")
-        if action == "STOP" or direction == "NONE":
+
+        if action == "STOP" or (direction and direction.upper() == "NONE"):
             self.motor_controller.stop()
-        elif direction == "FORWARD":
-            self.motor_controller.drive_forward(speed)
-        elif direction == "BACKWARD":
-            self.motor_controller.drive_backward(speed)
-        elif direction == "LEFT":
-            self.motor_controller.turn_right(MANUAL_TURN_SPEED)
-        elif direction == "RIGHT":
-            self.motor_controller.turn_left(MANUAL_TURN_SPEED)
+            logger.info("Drive command: STOP")
+        elif direction and speed is not None:
+            logger.info(f"Drive command: {direction} at speed {speed}")
+            if direction == "FORWARD":
+                self.motor_controller.drive_forward(speed)
+            elif direction == "BACKWARD":
+                self.motor_controller.drive_backward(speed)
+            elif direction == "LEFT":
+                self.motor_controller.turn_right(MANUAL_TURN_SPEED)
+            elif direction == "RIGHT":
+                self.motor_controller.turn_left(MANUAL_TURN_SPEED)
+        elif speed is not None and direction is None and action == "UPDATE_SPEED_ONLY":
+             logger.info(f"Received deprecated speed update via drive cmd: {speed}. Use SET_SPEED.")
         else:
-            self.motor_controller.stop()
-    
-    def _handle_motor_command(self, data: Dict[str, Any]):
-        if self.test_autonav_active:
-            logger.info("Auto-nav active, motor command ignored.")
-            return
-        logger.debug(f"Received MOTOR command: {data}")
-        speed = data.get('speed', 0)
-        self.motor_controller.set_speed(speed)
+            logger.warning(f"Unknown drive command or missing parameters: {data}")
     
     def _handle_servo_command(self, data: Dict[str, Any]):
         logger.debug(f"Received SERVO command: {data}")
@@ -227,6 +236,42 @@ class ForkliftServer:
             logger.info(f"Distance PID updated: Kp={kp}, Ki={ki}, Kd={kd}")
         except (TypeError, ValueError, KeyError) as e:
             logger.error(f"Invalid distance PID values: {pid_values}. Error: {e}")
+
+    def _handle_set_overhead_target(self, data: Dict[str, Any]):
+        """Handles command to set an overhead target pose (pickup or dropoff)."""
+        target_name = data.get("value", {}).get("target_name")
+        
+        if not target_name or target_name not in self.overhead_target_poses:
+            logger.warning(f"Invalid or missing target_name for SET_OVERHEAD_TARGET: {target_name}. Expected 'pickup' or 'dropoff'.")
+            return
+
+        if self.robot_overhead_pose is not None:
+            self.overhead_target_poses[target_name] = self.robot_overhead_pose
+            px, py, ptheta_deg = self.robot_overhead_pose[0], self.robot_overhead_pose[1], math.degrees(self.robot_overhead_pose[2])
+            logger.info(f"Overhead target '{target_name}' SET to current robot pose: X={px:.0f}, Y={py:.0f}, Theta={ptheta_deg:.1f}°")
+            self._save_overhead_target_poses() # Save after setting
+        else:
+            logger.warning(f"Could not set overhead target '{target_name}': Robot overhead pose is currently not detected.")
+    
+    def _handle_set_speed_command(self, data: Dict[str, Any]):
+        """Handles the SET_SPEED command from the client's speed slider."""
+        if self.test_autonav_active:
+            logger.info("Auto-nav active, SET_SPEED command ignored.")
+            return
+        
+        speed_value = data.get("value")
+        if speed_value is not None:
+            try:
+                speed = int(speed_value)
+                if 0 <= speed <= 100:
+                    self.motor_controller.set_speed(speed) # This is the key call
+                    logger.info(f"Motor speed SET to {speed} via command.")
+                else:
+                    logger.warning(f"Invalid speed value for SET_SPEED: {speed}. Must be 0-100.")
+            except ValueError:
+                logger.error(f"Invalid speed format for SET_SPEED: {speed_value}.")
+        else:
+            logger.warning("SET_SPEED command received without a 'value'.")
     
     def _run_video_server(self):
         """Run video server in a separate thread"""
@@ -303,17 +348,17 @@ class ForkliftServer:
                     
                 # else: raw_overhead_frame was None, do nothing with it for streamer
 
-                # Log overhead camera FPS periodically
-                current_time_for_fps_log = time.time()
-                if current_time_for_fps_log - self.last_overhead_log_time >= self.log_interval_seconds:
-                    elapsed_time = current_time_for_fps_log - self.last_overhead_log_time
-                    if elapsed_time > 0: # Avoid division by zero if interval is very small or time didn't advance
-                        fps = self.overhead_frames_received_count / elapsed_time
-                        logger.info(f"Overhead Camera FPS (Pi perspective): {fps:.2f} FPS ({self.overhead_frames_received_count} frames in {elapsed_time:.2f}s)")
-                    else:
-                        logger.info(f"Overhead Camera FPS (Pi perspective): Unable to calculate FPS, zero elapsed time. Frames: {self.overhead_frames_received_count}")
-                    self.overhead_frames_received_count = 0
-                    self.last_overhead_log_time = current_time_for_fps_log
+                # Log overhead camera FPS periodically (Commented out as per user request)
+                # current_time_for_fps_log = time.time()
+                # if current_time_for_fps_log - self.last_overhead_log_time >= self.log_interval_seconds:
+                #     elapsed_time = current_time_for_fps_log - self.last_overhead_log_time
+                #     if elapsed_time > 0: # Avoid division by zero if interval is very small or time didn't advance
+                #         fps = self.overhead_frames_received_count / elapsed_time
+                #         logger.info(f"Overhead Camera FPS (Pi perspective): {fps:.2f} FPS ({self.overhead_frames_received_count} frames in {elapsed_time:.2f}s)")
+                #     else:
+                #         logger.info(f"Overhead Camera FPS (Pi perspective): Unable to calculate FPS, zero elapsed time. Frames: {self.overhead_frames_received_count}")
+                #     self.overhead_frames_received_count = 0
+                #     self.last_overhead_log_time = current_time_for_fps_log
 
                 if self.test_autonav_active:
                     # TODO: IMPORTANT - For actual overhead navigation, current_pose_onboard should be replaced/augmented
@@ -480,6 +525,38 @@ class ForkliftServer:
         finally:
             self.cleanup_complete.set()
             self.cleanup_lock.release()
+
+    def _load_overhead_target_poses(self):
+        try:
+            with open(OVERHEAD_TARGETS_FILE, 'r') as f:
+                loaded_poses = json.load(f)
+                # Basic validation: check if keys exist, can be more thorough
+                if "pickup" in loaded_poses and "dropoff" in loaded_poses:
+                    self.overhead_target_poses["pickup"] = tuple(loaded_poses["pickup"]) if loaded_poses["pickup"] else None
+                    self.overhead_target_poses["dropoff"] = tuple(loaded_poses["dropoff"]) if loaded_poses["dropoff"] else None
+                    logger.info(f"Overhead target poses loaded from {OVERHEAD_TARGETS_FILE}.")
+                    if self.overhead_target_poses["pickup"]:
+                        px, py, pth = self.overhead_target_poses["pickup"]
+                        logger.info(f"  Loaded Pickup: X={px:.0f}, Y={py:.0f}, Theta={math.degrees(pth):.1f}°")
+                    if self.overhead_target_poses["dropoff"]:
+                        dx, dy, dth = self.overhead_target_poses["dropoff"]
+                        logger.info(f"  Loaded Dropoff: X={dx:.0f}, Y={dy:.0f}, Theta={math.degrees(dth):.1f}°")
+                else:
+                    logger.warning(f"Invalid format in {OVERHEAD_TARGETS_FILE}. Using default empty poses.")
+        except FileNotFoundError:
+            logger.info(f"{OVERHEAD_TARGETS_FILE} not found. Will be created when targets are set. Using default empty poses.")
+        except json.JSONDecodeError:
+            logger.error(f"Error decoding JSON from {OVERHEAD_TARGETS_FILE}. Using default empty poses.")
+        except Exception as e:
+            logger.error(f"Unexpected error loading overhead target poses: {e}. Using default empty poses.")
+
+    def _save_overhead_target_poses(self):
+        try:
+            with open(OVERHEAD_TARGETS_FILE, 'w') as f:
+                json.dump(self.overhead_target_poses, f, indent=4)
+            logger.info(f"Overhead target poses saved to {OVERHEAD_TARGETS_FILE}.")
+        except Exception as e:
+            logger.error(f"Error saving overhead target poses to {OVERHEAD_TARGETS_FILE}: {e}")
 
 if __name__ == '__main__':
     server = ForkliftServer()
