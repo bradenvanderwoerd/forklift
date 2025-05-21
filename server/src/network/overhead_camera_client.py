@@ -104,7 +104,7 @@ class WarehouseCameraClient:
                     
                     self._reconnect_delay = 1.0
                     self.consecutive_failures = 0
-                    self.socket.settimeout(0.5)
+                    self.socket.settimeout(2.0)
                 
                 current_time = time.time()
                 
