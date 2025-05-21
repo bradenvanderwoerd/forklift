@@ -259,10 +259,13 @@ class MainWindow(QMainWindow):
 
     def on_speed_change(self, value):
         self.current_speed = value
-        if self.is_connected and not self.is_autonav_active:
-            # Send a specific command for speed slider changes
-            self.robot_client.send_command("SET_SPEED", self.current_speed) 
-            logger.debug(f"CLIENT: Speed slider changed to {self.current_speed}. Sent SET_SPEED command.")
+        # We will now rely on the keyPressEvent to send the updated speed
+        # with the drive commands. This avoids sending SET_SPEED proactively,
+        # which might be causing the robot to move unintentionally on the server.
+        # if self.is_connected and not self.is_autonav_active:
+        #     self.robot_client.send_command("SET_SPEED", self.current_speed) 
+        #     logger.debug(f"CLIENT: Speed slider changed to {self.current_speed}. Sent SET_SPEED command.")
+        logger.debug(f"CLIENT: Speed slider changed to {self.current_speed}. Speed will be applied on next drive command.")
         self.setFocus() # Ensure main window regains focus after slider interaction
 
     def _update_single_video_feed(self, frame: Optional[np.ndarray], label: QLabel, feed_name: str):

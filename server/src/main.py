@@ -148,9 +148,9 @@ class ForkliftServer:
             elif direction == "BACKWARD":
                 self.motor_controller.drive_backward(speed)
             elif direction == "LEFT":
-                self.motor_controller.turn_right(MANUAL_TURN_SPEED)
+                self.motor_controller.turn_right(speed)
             elif direction == "RIGHT":
-                self.motor_controller.turn_left(MANUAL_TURN_SPEED)
+                self.motor_controller.turn_left(speed)
         elif speed is not None and direction is None and action == "UPDATE_SPEED_ONLY":
              logger.info(f"Received deprecated speed update via drive cmd: {speed}. Use SET_SPEED.")
         else:
@@ -264,8 +264,8 @@ class ForkliftServer:
             try:
                 speed = int(speed_value)
                 if 0 <= speed <= 100:
-                    self.motor_controller.set_speed(speed) # This is the key call
-                    logger.info(f"Motor speed SET to {speed} via command.")
+                    # self.motor_controller.set_speed(speed) # This call is now redundant
+                    logger.info(f"SET_SPEED command received with value {speed}. Speed is applied with drive commands.")
                 else:
                     logger.warning(f"Invalid speed value for SET_SPEED: {speed}. Must be 0-100.")
             except ValueError:
