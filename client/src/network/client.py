@@ -1,5 +1,6 @@
 import asyncio
 import websockets
+from websockets.typing import State
 import json
 import cv2
 import numpy as np
@@ -182,7 +183,7 @@ class RobotClient:
 
         close_tasks = [
             asyncio.wait_for(ws.close(), timeout=2.0) 
-            for ws in ws_connections if ws and ws.state != websockets.ConnectionState.CLOSED
+            for ws in ws_connections if ws and ws.state != State.CLOSED
         ]
         if close_tasks:
             results = await asyncio.gather(*close_tasks, return_exceptions=True)
@@ -205,7 +206,7 @@ class RobotClient:
         try:
             while not (self._stop_event and self._stop_event.is_set()):
                 try:
-                    if not ws or ws.state == websockets.ConnectionState.CLOSED:
+                    if not ws or ws.state == State.CLOSED:
                         logger.warning(f"{stream_name} websocket is None or closed, stopping video reception.")
                         break
                     data = await asyncio.wait_for(ws.recv(), timeout=1.0)
@@ -283,15 +284,15 @@ class RobotClient:
                     await asyncio.wait_for(self._stop_event.wait(), timeout=1.0) 
                 except asyncio.TimeoutError:
                     any_ws_closed = False
-                    if self.command_ws and self.command_ws.state == websockets.ConnectionState.CLOSED:
+                    if self.command_ws and self.command_ws.state == State.CLOSED:
                         logger.warning("Command WebSocket found closed.")
                         self.command_connected = False
                         any_ws_closed = True
-                    if self.onboard_video_ws and self.onboard_video_ws.state == websockets.ConnectionState.CLOSED:
+                    if self.onboard_video_ws and self.onboard_video_ws.state == State.CLOSED:
                         logger.warning("Onboard Video WebSocket found closed.")
                         self.onboard_video_connected = False
                         any_ws_closed = True
-                    if self.overhead_video_ws and self.overhead_video_ws.state == websockets.ConnectionState.CLOSED:
+                    if self.overhead_video_ws and self.overhead_video_ws.state == State.CLOSED:
                         logger.warning("Overhead Video WebSocket found closed.")
                         self.overhead_video_connected = False
                         any_ws_closed = True
