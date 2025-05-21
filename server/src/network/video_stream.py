@@ -15,6 +15,7 @@ from picamera2.outputs import FileOutput
 import cv2.aruco as aruco
 import os
 from ..utils import config # Added import for config
+import socket
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,8 @@ class VideoStreamer:
         self.quality_controller = AdaptiveQualityController()
         self.last_logged_primary_target_id = None
         self.shared_primary_target_pose = None # For sharing latest primary target pose with ForkliftServer
+        self.external_frame: Optional[np.ndarray] = None
+        self.external_frame_lock = threading.Lock()
         
         # Use ArUco settings from config
         self.aruco_dict = aruco.getPredefinedDictionary(config.ARUCO_DICTIONARY)
@@ -113,6 +116,12 @@ class VideoStreamer:
         # Use marker size from config
         self.marker_actual_size_m = config.ARUCO_MARKER_SIZE_METERS
         
+    def set_external_frame(self, frame: np.ndarray):
+        """Sets an external frame to be streamed, typically from the overhead camera."""
+        with self.external_frame_lock:
+            self.external_frame = frame.copy() # Store a copy
+            logger.debug("VideoStreamer: External frame received and stored.")
+
     def _initialize_camera(self):
         """Initialize the camera"""
         try:
@@ -149,130 +158,215 @@ class VideoStreamer:
         logger.info(f"New video client connected. Total clients: {len(self.clients)}")
         try:
             while self.running:
-                if not self.camera:
-                    logger.error("Camera not initialized")
-                    await asyncio.sleep(1)
-                    continue
+                current_frame_to_process = None
+                is_external_frame = False
+
+                # Check for an external frame first
+                with self.external_frame_lock:
+                    if self.external_frame is not None:
+                        current_frame_to_process = self.external_frame
+                        self.external_frame = None # Consume the frame
+                        is_external_frame = True
+                        logger.debug("VideoStreamer: Using external frame for this cycle.")
                 
-                frame_color = self.camera.capture_array()
-                if frame_color is None:
-                    logger.error("Failed to capture frame")
+                if not is_external_frame:
+                    # If no external frame, use PiCamera
+                    if not self.camera:
+                        logger.error("PiCamera not initialized and no external frame available.")
+                        await asyncio.sleep(1)
+                        continue
+                    
+                    try:
+                        frame_color_pi = self.camera.capture_array()
+                        if frame_color_pi is None:
+                            logger.error("Failed to capture frame from PiCamera")
+                            await asyncio.sleep(0.1)
+                            continue
+                        current_frame_to_process = cv2.rotate(frame_color_pi, cv2.ROTATE_180)
+                    except Exception as e:
+                        logger.error(f"Error capturing or rotating PiCamera frame: {e}")
+                        await asyncio.sleep(0.1)
+                        continue
+
+                if current_frame_to_process is None:
+                    # Should not happen if logic above is correct, but as a safeguard
+                    logger.warning("No frame available to process for this cycle.")
+                    await asyncio.sleep(0.1)
+                    continue
+
+                # --- ArUco Detection (Only for PiCamera frames, not external/overhead frames) ---
+                frame_display = current_frame_to_process # Default to current frame
+                if not is_external_frame: # Process ArUco only if it's a PiCamera frame
+                    aruco_start_time = time.time()
+                    gray_frame = cv2.cvtColor(current_frame_to_process, cv2.COLOR_RGB2GRAY) # Assuming RGB input from PiCam
+                    corners, ids, rejected = self.aruco_detector.detectMarkers(gray_frame)
+                    
+                    if ids is not None:
+                        # Create a mutable copy for drawing if markers are detected
+                        frame_display = aruco.drawDetectedMarkers(current_frame_to_process.copy(), corners, ids)
+                        # logger.debug(f"Detected ArUco IDs: {ids.flatten().tolist()}") # Can be verbose
+
+                        if self.camera_matrix is not None and self.dist_coeffs is not None:
+                            try:
+                                rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(
+                                    corners, 
+                                    self.marker_actual_size_m, 
+                                    self.camera_matrix, 
+                                    self.dist_coeffs
+                                )
+                                primary_target_visible_this_frame = False
+                                for i in range(len(ids)):
+                                    rvec = rvecs[i]
+                                    tvec = tvecs[i]
+                                    current_id = ids[i][0]
+                                    marker_name = "Unknown"
+                                    is_primary_target = False
+
+                                    if current_id == config.MARKER_ID_WHITE_BOX:
+                                        marker_name = "White Box"
+                                        is_primary_target = True
+                                    elif current_id == config.MARKER_ID_BLACK_BOX:
+                                        marker_name = "Black Box"
+                                        is_primary_target = True
+                                    elif current_id == config.MARKER_ID_WHITE_BOX_DESTINATION:
+                                        marker_name = "White Box Destination"
+                                    elif current_id == config.MARKER_ID_BLACK_BOX_DESTINATION:
+                                        marker_name = "Black Box Destination"
+                                    elif config.MARKER_ID_NAVIGATION_AID != -1 and current_id == config.MARKER_ID_NAVIGATION_AID:
+                                        marker_name = "Navigation Aid"
+
+                                    if marker_name != "Unknown":
+                                        log_details = f"ID: {current_id}, tvec: {tvec.flatten().round(3)}, rvec: {rvec.flatten().round(3)}"
+                                        if is_primary_target:
+                                            primary_target_visible_this_frame = True
+                                            if self.last_logged_primary_target_id != current_id:
+                                                logger.info(f"Primary Target Acquired: {marker_name} ({log_details})")
+                                                self.last_logged_primary_target_id = current_id
+                                            # Always update pose if primary target is visible
+                                            self.shared_primary_target_pose = (tvec, rvec)
+                                            # Log subsequent at DEBUG handled by primary_target_visible_this_frame check below
+                                        else: 
+                                            logger.info(f"Auxiliary Target Visible: {marker_name} ({log_details})")
+                                    else:
+                                        logger.debug(f"Detected non-target ArUco ID: {current_id}, tvec: {tvec.flatten().round(3)}, rvec: {rvec.flatten().round(3)}")
+                                    
+                                    cv2.drawFrameAxes(frame_display, 
+                                                      self.camera_matrix, 
+                                                      self.dist_coeffs, 
+                                                      rvec, tvec, 
+                                                      self.marker_actual_size_m * 0.5)
+
+                                # After iterating all markers, if a primary target was previously logged but not seen now
+                                if self.last_logged_primary_target_id is not None and not primary_target_visible_this_frame:
+                                    logger.info(f"Primary Target (ID: {self.last_logged_primary_target_id}) Lost.")
+                                    self.last_logged_primary_target_id = None 
+                                    self.shared_primary_target_pose = None # Clear shared pose
+                                elif primary_target_visible_this_frame and self.shared_primary_target_pose is not None:
+                                     # Primary target is still visible, log tvec/rvec at debug if it's the same one
+                                     # This assumes self.shared_primary_target_pose was updated within the loop for the current primary
+                                     tvec_s, _ = self.shared_primary_target_pose
+                                     logger.debug(f"Primary Target Still Visible (ID: {self.last_logged_primary_target_id}), tvec: {tvec_s.flatten().round(3)}")
+
+                            except cv2.error as e:
+                                logger.error(f"OpenCV error during pose estimation or drawing: {e}")
+                            except Exception as e:
+                                logger.error(f"Unexpected error during pose estimation or drawing: {e}")
+                        else:
+                            if not hasattr(self, '_warned_missing_calib_for_pose'):
+                                logger.warning("Camera calibration data not available. Skipping pose estimation and axis drawing.")
+                                self._warned_missing_calib_for_pose = True 
+                        aruco_processing_time = (time.time() - aruco_start_time) * 1000
+                        logger.debug(f"ArUco processing time: {aruco_processing_time:.2f} ms")
+                    # If no IDs, and it was a PiCamera frame, frame_display is already current_frame_to_process
+                    elif not is_external_frame and self.last_logged_primary_target_id is not None:
+                        # This case: PiCamera frame, no ArUco IDs detected THIS frame,
+                        # but a primary target WAS being tracked.
+                        logger.info(f"Primary Target (ID: {self.last_logged_primary_target_id}) Lost (no markers detected this frame).")
+                        self.last_logged_primary_target_id = None
+                        self.shared_primary_target_pose = None # Clear shared pose
+
+                # --- Encoding and Sending --- 
+                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self.quality_controller.get_quality()]
+                result, encoded_jpeg = cv2.imencode('.jpg', frame_display, encode_param)
+                
+                if not result:
+                    logger.error("Failed to encode frame to JPEG")
                     await asyncio.sleep(0.1)
                     continue
                 
-                frame_color = cv2.rotate(frame_color, cv2.ROTATE_180)
+                # FrameSequencer could be used here if your client needs it
+                # For simplicity, direct send for now.
                 
-                # --- ArUco Detection --- 
-                aruco_start_time = time.time() # Start timer
+                message = encoded_jpeg.tobytes()
                 
-                gray_frame = cv2.cvtColor(frame_color, cv2.COLOR_RGB2GRAY)
-                corners, ids, rejected = self.aruco_detector.detectMarkers(gray_frame)
+                # Send to all connected clients
+                # Use a copy of self.clients for safe iteration if clients can connect/disconnect concurrently
+                clients_copy = list(self.clients)
+                for client_ws in clients_copy:
+                    try:
+                        await client_ws.send(message)
+                    except ConnectionClosed:
+                        logger.info("Client connection closed, removing from list.")
+                        self.clients.remove(client_ws)
+                    except Exception as e:
+                        logger.error(f"Error sending frame to client: {e}")
+                        # Optionally remove problematic client
+                        # self.clients.remove(client_ws) 
                 
-                if ids is not None:
-                    frame_display = aruco.drawDetectedMarkers(frame_color.copy(), corners, ids)
-                    logger.debug(f"Detected ArUco IDs: {ids.flatten().tolist()}") 
-
-                    # --- Pose Estimation and Visualization ---
-                    if self.camera_matrix is not None and self.dist_coeffs is not None:
-                        try:
-                            # Estimate pose for each detected marker
-                            # rvecs, tvecs are arrays of rotation and translation vectors for each marker
-                            rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(
-                                corners, 
-                                self.marker_actual_size_m, 
-                                self.camera_matrix, 
-                                self.dist_coeffs
-                            )
-
-                            for i in range(len(ids)):
-                                rvec = rvecs[i]
-                                tvec = tvecs[i]
-                                current_id = ids[i][0]
-
-                                marker_name = "Unknown"
-                                is_primary_target = False
-
-                                if current_id == config.MARKER_ID_WHITE_BOX:
-                                    marker_name = "White Box"
-                                    is_primary_target = True
-                                elif current_id == config.MARKER_ID_BLACK_BOX:
-                                    marker_name = "Black Box"
-                                    is_primary_target = True
-                                elif current_id == config.MARKER_ID_WHITE_BOX_DESTINATION:
-                                    marker_name = "White Box Destination"
-                                elif current_id == config.MARKER_ID_BLACK_BOX_DESTINATION:
-                                    marker_name = "Black Box Destination"
-                                elif config.MARKER_ID_NAVIGATION_AID != -1 and current_id == config.MARKER_ID_NAVIGATION_AID:
-                                    marker_name = "Navigation Aid"
-
-                                if marker_name != "Unknown":
-                                    log_details = f"ID: {current_id}, tvec: {tvec.flatten().round(3)}, rvec: {rvec.flatten().round(3)}"
-                                    if is_primary_target:
-                                        if self.last_logged_primary_target_id != current_id:
-                                            logger.info(f"Primary Target Acquired: {marker_name} ({log_details})")
-                                            self.last_logged_primary_target_id = current_id
-                                            self.shared_primary_target_pose = (tvec, rvec) # Share pose
-                                        else:
-                                            logger.debug(f"Primary Target Still Visible: {marker_name} ({log_details})") # Log subsequent at DEBUG
-                                            # Keep shared_primary_target_pose as is, or update if desired for continuous tracking
-                                            self.shared_primary_target_pose = (tvec, rvec) # Update continuously while visible for ForkliftServer
-                                    else: # For non-primary but configured targets (destinations, nav aid)
-                                        logger.info(f"Auxiliary Target Visible: {marker_name} ({log_details})")
-                                else:
-                                    logger.debug(f"Detected non-target ArUco ID: {current_id}, tvec: {tvec.flatten().round(3)}, rvec: {rvec.flatten().round(3)}")
-                                
-                                cv2.drawFrameAxes(frame_display, 
-                                                  self.camera_matrix, 
-                                                  self.dist_coeffs, 
-                                                  rvec, tvec, 
-                                                  self.marker_actual_size_m * 0.5) # Length of axis
-
-                        except cv2.error as e:
-                            logger.error(f"OpenCV error during pose estimation or drawing: {e}")
-                        except Exception as e:
-                            logger.error(f"Unexpected error during pose estimation or drawing: {e}")
-                    else:
-                        if not hasattr(self, '_warned_missing_calib_for_pose'):
-                            logger.warning("Camera calibration data not available. Skipping pose estimation and axis drawing.")
-                            self._warned_missing_calib_for_pose = True # Warn only once
-
-                    # Log ArUco processing time after all main processing for this frame's markers is done
-                    aruco_processing_time = (time.time() - aruco_start_time) * 1000 # in milliseconds
-                    logger.debug(f"ArUco processing (detection & pose) time: {aruco_processing_time:.2f} ms")
-                    
-                    # --- End ArUco Pose Estimation --- (Visualization part still happens below)
-                    # The original "End ArUco Detection & Pose Estimation" comment was slightly misplaced if including visualization timing
-                    
-                    # Visualization part (drawFrameAxes was inside the loop)
-                    # drawDetectedMarkers was at the start of 'if ids is not None'
-                else:
-                    frame_display = frame_color
-                    # If no IDs, still record a processing time (minimal, but good for consistency)
-                    aruco_processing_time = (time.time() - aruco_start_time) * 1000 # in milliseconds
-                    logger.debug(f"ArUco processing (no IDs found) time: {aruco_processing_time:.2f} ms")
-                # --- End ArUco Detection (overall) ---
-
-                # Reset last_logged_primary_target_id if no markers are seen in this frame
-                if ids is None and self.last_logged_primary_target_id is not None:
-                    logger.info(f"Primary Target (ID: {self.last_logged_primary_target_id}) Lost.")
-                    self.last_logged_primary_target_id = None
-                    self.shared_primary_target_pose = None # Clear shared pose when lost
-
-                quality = self.quality_controller.get_quality()
-                _, buffer = cv2.imencode('.jpg', frame_display, [cv2.IMWRITE_JPEG_QUALITY, quality])
-                
-                await websocket.send(buffer.tobytes())
-                
-                await asyncio.sleep(1/30)
-                
+                # Small delay to prevent hogging CPU if not much is happening
+                await asyncio.sleep(0.01) 
+        
         except ConnectionClosed:
-            logger.info("Video client connection closed")
+            logger.info("Client disconnected gracefully.")
         except Exception as e:
-            logger.error(f"Error in video stream handler: {e}", exc_info=True)
+            logger.error(f"Error in client handler: {e}", exc_info=True)
         finally:
             self.clients.remove(websocket)
-            logger.info(f"Video client disconnected. Remaining clients: {len(self.clients)}")
-            
+            logger.info(f"Client removed. Total clients: {len(self.clients)}")
+
+    async def _send_video_data_udp(self):
+        """Sends video data over UDP. (Conceptual - to be implemented/adapted)
+           This is where the old UDP logic would go, adapted for external frames.
+        """
+        logger.info(f"UDP Video Streamer starting on {self.host}:{self.port}")
+        udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Set a timeout for the socket if needed, or handle blocking appropriately
+
+        # This loop would be similar to _handle_client but for UDP clients
+        # It needs a way to know client addresses, perhaps from an initial handshake
+        # or a fixed list.
+        # For now, this is a placeholder for where UDP sending logic would integrate.
+        # If your Mac client connects via WebSocket, this UDP part might not be what you're using for video.
+
+        # Example structure:
+        # while self.running:
+        #     current_frame_to_process = None
+        #     is_external_frame = False
+        #     with self.external_frame_lock:
+        #         if self.external_frame is not None:
+        #             current_frame_to_process = self.external_frame
+        #             self.external_frame = None
+        #             is_external_frame = True
+        #     
+        #     if not is_external_frame and self.camera:
+        #         try:
+        #             frame_color_pi = self.camera.capture_array()
+        #             # ... processing ...
+        #             current_frame_to_process = cv2.rotate(frame_color_pi, cv2.ROTATE_180)
+        #         except Exception as e:
+        #             logger.error(f"UDP: Error capturing PiCamera frame: {e}")
+        #             time.sleep(0.1)
+        #             continue
+        # 
+        #     if current_frame_to_process is not None:
+        #          # ... ArUco for PiCam frames only ...
+        #          # ... Encoding ...
+        #          # udp_socket.sendto(encoded_jpeg.tobytes(), (client_host, client_port))
+        #     time.sleep(0.01) # Loop delay
+        
+        udp_socket.close()
+        logger.info("UDP Video Streamer stopped.")
+
     async def _shutdown_server_resources(self):
         logger.info(f"VideoStreamer ({self.host}:{self.port}) shutting down resources...")
         closing_tasks = []

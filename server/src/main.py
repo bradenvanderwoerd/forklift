@@ -24,7 +24,7 @@ from .utils.config import (
 
 # Set up logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -284,9 +284,10 @@ class ForkliftServer:
                 # Get overhead camera frame
                 overhead_frame = self.overhead_camera_client.get_video_frame()
                 if overhead_frame is not None:
-                    # For now, just log that we got a frame. Processing will happen later.
-                    logger.debug(f"Received overhead frame of shape: {overhead_frame.shape}")
-                    # Here, you would pass overhead_frame to OverheadLocalizer to get self.robot_overhead_pose
+                    logger.debug(f"Received overhead frame of shape: {overhead_frame.shape}. Forwarding to VideoStreamer.")
+                    self.video_streamer.set_external_frame(overhead_frame)
+                    # Here, you would also pass overhead_frame to OverheadLocalizer to get self.robot_overhead_pose
+                # else: VideoStreamer will use its own Pi camera frame by default
 
                 if self.test_autonav_active:
                     current_pose = self.video_streamer.shared_primary_target_pose # This is from onboard camera
