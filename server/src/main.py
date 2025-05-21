@@ -26,13 +26,14 @@ from .utils.config import (
 
 # Set up logging
 logging.basicConfig(
-    level=logging.INFO,
+    # level=logging.INFO, # Level will be set by getLogger().setLevel()
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
     ]
 )
-logger = logging.getLogger(__name__)
+logging.getLogger().setLevel(logging.INFO) # Set root logger level
+logger = logging.getLogger(__name__) # Get a logger for the current module
 
 # Auto-navigation Stages
 AUTONAV_STAGE_IDLE = "IDLE"

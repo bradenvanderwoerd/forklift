@@ -173,7 +173,8 @@ class WarehouseCameraClient:
                 
                 # Request video frame (G 1)
                 if current_time - last_video_request >= video_request_interval:
-                    command_to_send_g1 = b"G 1" # Corrected: Removed \\\\n
+                    command_to_send_g1 = b"G 1"
+
                     logger.debug(f"Attempting to send command: {command_to_send_g1!r}")
                     try:
                         self.socket.sendall(command_to_send_g1)
@@ -181,76 +182,114 @@ class WarehouseCameraClient:
                     except Exception as e:
                         logger.error(f"Error sending command {command_to_send_g1!r}: {e}")
                         self._handle_connection_error()
-                        continue # Skip to next iteration
+                        continue
 
-                    frame_data = bytearray()
-                    image_read_start_time = time.time()
-                    buffer_size = 8192 # Already defined
+                    # 1. Read the image size (string ending with newline)
+                    img_size_str_bytes = bytearray()
+                    received_anything_size = False
+                    read_size_start_time = time.time()
+                    try:
+                        while time.time() - read_size_start_time < self.socket.gettimeout():
+                            char = self.socket.recv(1)
+                            if not char:
+                                logger.warning("Connection closed by server while reading image size (recv(1) returned empty).")
+                                raise ConnectionError("Connection closed by server while reading image size")
+                            received_anything_size = True
+                            # logger.debug(f"Recv image size byte: {char!r}")
+                            if char == b'\n':
+                                break
+                            img_size_str_bytes.extend(char)
+                        else: # Timeout occurred
+                            if received_anything_size:
+                                logger.warning(f"Socket timeout after receiving partial image size: {img_size_str_bytes!r}")
+                            else:
+                                logger.warning("Socket timeout while waiting for image size (no data received).")
+                            self._handle_connection_error() # Or just continue if timeout is expected
+                            continue
+
+                        img_size_str = img_size_str_bytes.decode('ascii').strip()
+                        img_size = int(img_size_str)
+                        logger.debug(f"Received image size: {img_size}")
+
+                    except socket.timeout:
+                        if received_anything_size:
+                             logger.warning(f"Socket timeout after receiving partial image size: {img_size_str_bytes!r}")
+                        else:
+                            logger.warning(f"Socket timeout reading image size for G 1 (no data received).")
+                        self._handle_connection_error() # Or just continue if timeout is expected
+                        continue
+                    except (ValueError, UnicodeDecodeError) as e:
+                        logger.error(f"Error parsing image size '{img_size_str_bytes.decode(errors="ignore")}': {e}")
+                        self._handle_connection_error()
+                        continue
+                    except ConnectionError as e: # From explicit raise
+                        logger.error(f"Connection error while reading image size: {e}")
+                        self._handle_connection_error()
+                        continue
+                    except Exception as e:
+                        logger.error(f"Unexpected error reading image size: {e}")
+                        self._handle_connection_error()
+                        continue
                     
-                    received_anything_g1 = False
-                    while time.time() - image_read_start_time < self.socket.gettimeout():
-                        try:
-                            chunk = self.socket.recv(buffer_size)
+                    # 2. Read the image data
+                    frame_data = bytearray()
+                    bytes_received = 0
+                    image_read_start_time = time.time() # Reset timer for image data read
+
+                    try:
+                        while bytes_received < img_size and time.time() - image_read_start_time < self.socket.gettimeout():
+                            chunk_size = min(8192, img_size - bytes_received)
+                            chunk = self.socket.recv(chunk_size)
                             if not chunk:
                                 logger.warning("Connection closed by server while reading image data (recv returned empty).")
-                                raise ConnectionError("Connection closed by server while reading image")
-                            
-                            received_anything_g1 = True
-                            # logger.debug(f"Received image chunk: {len(chunk)} bytes") # This can be very verbose
+                                raise ConnectionError("Connection closed by server while reading image data")
                             frame_data.extend(chunk)
-                            # Efficiently check for EOI marker
-                            # Check if the typical last 2 bytes are EOI.
-                            # This is faster than searching the whole array every time.
-                            if len(frame_data) >= 2 and frame_data[-2:] == b'\xff\xd9':
-                                logger.debug(f"JPEG EOI marker detected at the end of current frame_data. Total bytes: {len(frame_data)}")
-                                break
-                            # As a fallback, or if data might arrive in larger, multiple-image chunks (less likely here)
-                            # elif b'\xff\xd9' in frame_data: 
-                            # logger.debug(f"JPEG EOI marker found within frame_data (not at exact end). Total bytes: {len(frame_data)}")
-                            # break
-                        except socket.timeout:
-                            if received_anything_g1:
-                                logger.debug(f"Socket timeout after receiving some image data for G 1. Received {len(frame_data)} bytes so far.")
-                            else:
-                                logger.debug("Socket timeout while waiting for G 1 image data (no data received).")
-                            break # Break from this inner while loop for recv
-                        except Exception as e:
-                            logger.error(f"Error during recv for G 1: {e}")
-                            self._handle_connection_error()
-                            frame_data = bytearray() # Clear potentially partial data
-                            break # Break from inner recv loop
-                    
-                    if frame_data:
-                        # Attempt to find the last SOI and EOI. This helps if there was any prefix noise
-                        # or if multiple concatenated JPEGs were sent (unlikely for this protocol).
-                        soi = frame_data.rfind(b'\xff\xd8') # Start of Image for JPEG
-                        eoi = frame_data.rfind(b'\xff\xd9', soi if soi != -1 else 0) # End of Image for JPEG, search after SOI
+                            bytes_received += len(chunk)
+                            # logger.debug(f"Received image chunk: {len(chunk)} bytes, total: {bytes_received}/{img_size}")
 
-                        if soi != -1 and eoi != -1 and eoi > soi:
-                            jpeg_data = frame_data[soi:eoi+2]
-                            logger.debug(f"Extracted JPEG data: {len(jpeg_data)} bytes between last SOI and EOI.")
+                        if bytes_received < img_size:
+                            logger.warning(f"Incomplete image data received: {bytes_received}/{img_size} bytes before timeout or error.")
+                            # Don't necessarily treat as a full connection error, maybe just a bad frame
+                            # But for now, let's be strict to see if it works.
+                            self._handle_connection_error()
+                            continue
+                        
+                        logger.debug(f"Successfully received {bytes_received} bytes for image.")
+
+                        # 3. Decode the image
+                        # Assuming JPEG format based on typical arena server behavior
+                        frame_np = cv2.imdecode(np.frombuffer(frame_data, dtype=np.uint8), cv2.IMREAD_COLOR)
+                        
+                        if frame_np is not None:
+                            # logger.debug(f"Successfully decoded frame: {frame_np.shape}")
                             try:
-                                nparr = np.frombuffer(jpeg_data, np.uint8)
-                                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                                if frame is not None:
-                                    try:
-                                        # Clear queue before putting new frame to ensure freshness
-                                        while not self.video_queue.empty():
-                                            self.video_queue.get_nowait()
-                                        self.video_queue.put_nowait(frame)
-                                        # logger.debug(f"Successfully decoded and queued video frame. Queue size: {self.video_queue.qsize()}")
-                                    except queue.Full:
-                                        logger.warning("Video frame queue full. Frame dropped.")
-                                        pass # Frame dropped
-                                else:
-                                    logger.warning(f"cv2.imdecode returned None for video frame. JPEG data length: {len(jpeg_data)}")
-                            except Exception as e:
-                                logger.warning(f"Failed to decode video frame: {e}. JPEG data length: {len(jpeg_data)}")
+                                # Clear old frames if any to keep the queue fresh
+                                while not self.video_queue.empty():
+                                    self.video_queue.get_nowait()
+                                self.video_queue.put_nowait(frame_np)
+                                # logger.debug(f"Put frame in video_queue. Size: {self.video_queue.qsize()}")
+                            except queue.Full:
+                                logger.warning("Video queue full, dropping frame.")
+                                pass # Frame dropped
                         else:
-                            logger.warning(f"Could not find valid SOI/EOI markers in received G 1 data. Data length: {len(frame_data)}. Last SOI at {soi}, last EOI at {eoi}.")
-                    else:
-                        logger.debug("No frame data received or processed for G 1.")
-                    last_video_request = current_time
+                            logger.warning(f"Failed to decode image from {len(frame_data)} bytes of data.")
+                            # Consider this a recoverable error for now, don't disconnect.
+
+                    except socket.timeout:
+                        logger.warning(f"Socket timeout while reading image data. Received {bytes_received}/{img_size} bytes.")
+                        self._handle_connection_error() 
+                        continue
+                    except ConnectionError as e: # From explicit raise
+                        logger.error(f"Connection error while reading image data: {e}")
+                        self._handle_connection_error()
+                        continue
+                    except Exception as e:
+                        logger.error(f"Error processing image data: {e}")
+                        # Depending on the error, might want to self._handle_connection_error()
+                        # For now, log and continue to allow recovery for next frame.
+                        continue # Skip to next iteration
+
+                    last_video_request = time.time() # Update only on successful send AND attempt to process
             
             except (socket.timeout, ConnectionError, ConnectionResetError) as e:
                 logger.warning(f"Connection error in _run_client: {e}")
