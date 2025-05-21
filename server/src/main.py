@@ -278,66 +278,60 @@ class ForkliftServer:
                         if current_pose:
                             tvec, rvec = current_pose
                             self.navigation_controller.set_target(tvec, rvec) 
-                            nav_active = self.navigation_controller.navigate()
+                            
+                            nav_still_moving = self.navigation_controller.navigate()
 
-                            # For stage transition, check if at target using the new inputs
                             x_cam = tvec[0][0]
                             z_cam = tvec[0][2]
                             
-                            # Ensure z_cam is valid for calculations, similar to navigation.py
-                            if z_cam > 0:
+                            is_definitely_at_target = False
+                            if z_cam > 0: # Valid pose for calculation
                                 angle_to_marker_rad = math.atan2(x_cam, z_cam)
                                 current_planar_distance_m = math.sqrt(x_cam**2 + z_cam**2)
                                 if self.navigation_controller.is_at_target(angle_to_marker_rad, current_planar_distance_m):
-                                    logger.info("ForkliftServer (AutoNav): Target Reached (by main loop check)! Transitioning stage.")
-                                    self.navigation_controller.clear_target() # This calls stop
-                                    self.autonav_stage = AUTONAV_STAGE_LOWERING_FORKS
-                                    self.servo_controller.set_position(AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, blocking=True)
-                                    logger.info("AutoNav: Forks lowered. Simulating pickup (delay 1s). Stage: LOWERING_FORKS -> LIFTING_FORKS")
-                                    time.sleep(1.0) # Simulate pickup time
-                                    self.autonav_stage = AUTONAV_STAGE_LIFTING_FORKS
-                                else: # Not at target by main.py's check
-                                    if not nav_active: 
-                                        # This case can happen if navigate() itself decided it's at target
-                                        # and returned False.
-                                        logger.info("ForkliftServer (AutoNav): navigate() returned False (target reached by its own logic). Transitioning stage.")
-                                        self.navigation_controller.clear_target() # This calls stop
-                                        self.autonav_stage = AUTONAV_STAGE_LOWERING_FORKS
-                                        self.servo_controller.set_position(AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, blocking=True)
-                                    logger.info("AutoNav: Forks lowered. Simulating pickup (delay 1s). Stage: LOWERING_FORKS -> LIFTING_FORKS")
-                                    time.sleep(1.0) # Simulate pickup time
-                                    self.autonav_stage = AUTONAV_STAGE_LIFTING_FORKS
-                        else: # No current_pose (target lost)
-                            logger.info("ForkliftServer (AutoNav): Primary target lost from view. Clearing navigation.")
-                            self.navigation_controller.clear_target() # This calls stop
-                            # Potentially stop autonav or try to re-acquire
-                            # For now, just stop motors and wait for target to reappear
+                                    logger.info("ForkliftServer (AutoNav NAVIGATING): Target Reached (checked in main loop via is_at_target).")
+                                    is_definitely_at_target = True
+                            
+                            if not nav_still_moving and not is_definitely_at_target:
+                                logger.info("ForkliftServer (AutoNav NAVIGATING): navigate() indicates movement stopped (likely target reached by its own logic).")
+                                is_definitely_at_target = True
+
+                            if is_definitely_at_target:
+                                logger.info("AutoNav: Target Reached! Transition: NAVIGATING -> LOWERING_FORKS")
+                                self.navigation_controller.clear_target() # Stop motors
+                                self.autonav_stage = AUTONAV_STAGE_LOWERING_FORKS
+                            # else: Still navigating or target calculations were invalid (z_cam <= 0)
+                        
+                        else: # No current_pose during NAVIGATING stage
+                            logger.info("ForkliftServer (AutoNav NAVIGATING): Primary target lost. Stopping navigation.")
+                            self.navigation_controller.clear_target() # Stop motors
+
                     elif self.autonav_stage == AUTONAV_STAGE_LOWERING_FORKS:
                         logger.info(f"AutoNav: Stage LOWERING_FORKS. Lowering forks to {AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE} deg.")
                         self.servo_controller.set_position(AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, blocking=True)
-                        logger.info("AutoNav: Forks lowered. Simulating pickup (delay 1s). Stage: LOWERING_FORKS -> LIFTING_FORKS")
+                        logger.info("AutoNav: Forks lowered. Simulating pickup (delay 1s). Transition: LOWERING_FORKS -> LIFTING_FORKS")
                         time.sleep(1.0) # Simulate pickup time
                         self.autonav_stage = AUTONAV_STAGE_LIFTING_FORKS
-                        
+
                     elif self.autonav_stage == AUTONAV_STAGE_LIFTING_FORKS:
                         logger.info(f"AutoNav: Stage LIFTING_FORKS. Lifting forks to {AUTONAV_FORK_CARRY_ANGLE} deg.")
-                        self.servo_controller.go_to_autonav_carry_position(blocking=True)
-                        logger.info("AutoNav: Forks lifted to carry position. Sequence complete for this target. Stage: LIFTING_FORKS -> IDLE")
+                        self.servo_controller.set_position(AUTONAV_FORK_CARRY_ANGLE, blocking=True) # Corrected call
+                        logger.info("AutoNav: Forks lifted. Sequence complete. Transition: LIFTING_FORKS -> IDLE")
                         self.autonav_stage = AUTONAV_STAGE_IDLE 
-                        # self.test_autonav_active = False # Optionally turn off autonav after one sequence
-                        # Or, wait for new command / new target detection to restart NAVIGATING stage.
-                        # For now, it will stay in IDLE but autonav is still "active" from toggle.
-                        # A new target detection won't re-trigger NAVIGATING unless stage is reset.
-                        # To re-run, user would toggle autonav off and on.
-                else:
-                    # Auto-navigation is not active
-                    # Ensure motors are stopped if autonav_stage was somehow not IDLE
+                        # To re-run, user must toggle autonav off then on, or logic for re-engaging NAVIGATING from IDLE would be needed.
+
+                    elif self.autonav_stage == AUTONAV_STAGE_IDLE:
+                        # logger.debug("AutoNav: Stage IDLE. Waiting for commands or new target acquisition if autonav is toggled.")
+                        pass
+                
+                else: # self.test_autonav_active is False
                     if self.autonav_stage != AUTONAV_STAGE_IDLE:
-                        logger.warning(f"Autonav not active, but stage was {self.autonav_stage}. Resetting to IDLE.")
-                        self.navigation_controller.clear_target()
+                        logger.warning(f"Autonav not active, but stage was {self.autonav_stage}. Resetting to IDLE and stopping nav.")
+                        if hasattr(self, 'navigation_controller') and self.navigation_controller:
+                            self.navigation_controller.clear_target()
                         self.autonav_stage = AUTONAV_STAGE_IDLE
                         
-                time.sleep(0.05) # Loop a bit faster for responsive navigation updates
+                time.sleep(0.05) # Main loop delay
                 
         except KeyboardInterrupt:
             logger.info("\nKeyboard interrupt (Ctrl+C) received. Initiating shutdown...")
