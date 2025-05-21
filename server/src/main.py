@@ -14,10 +14,12 @@ from .controllers.servo import ServoController
 from .controllers.navigation import NavigationController
 from .network.video_stream import VideoStreamer
 from .network.tcp_server import CommandServer
+from .network.overhead_camera_client import WarehouseCameraClient
 from .utils.config import (
     HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, 
     SERVO_PWM_PIN, MANUAL_TURN_SPEED, FORK_DOWN_POSITION, FORK_UP_POSITION,
-    AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, AUTONAV_FORK_CARRY_ANGLE
+    AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, AUTONAV_FORK_CARRY_ANGLE,
+    OVERHEAD_CAMERA_HOST, OVERHEAD_CAMERA_PORT
 )
 
 # Set up logging
@@ -54,6 +56,7 @@ class ForkliftServer:
         self.cleanup_complete = threading.Event()
         self.test_autonav_active = False # Flag for testing autonomous navigation
         self.autonav_stage = AUTONAV_STAGE_IDLE # Current stage of auto-navigation
+        self.robot_overhead_pose = None # To store (x_pixel, y_pixel, theta_pixel_frame)
         
         # Check port availability using new config variable names
         if not check_port_availability(SERVER_TCP_PORT):
@@ -68,6 +71,11 @@ class ForkliftServer:
         self.servo_controller = ServoController()
         self.navigation_controller = NavigationController(self.motor_controller)
         
+        # Initialize Overhead Camera Client
+        self.overhead_camera_client = WarehouseCameraClient(
+            host=OVERHEAD_CAMERA_HOST, 
+            port=OVERHEAD_CAMERA_PORT
+        )
         # Explicitly set to FORK_DOWN_POSITION (80) on startup
         self.servo_controller.set_position(FORK_DOWN_POSITION)  
         
@@ -85,6 +93,7 @@ class ForkliftServer:
         # Create threads for servers
         self.video_thread = threading.Thread(target=self._run_video_server)
         self.command_thread = threading.Thread(target=self._run_command_server)
+        # Overhead camera client manages its own thread, started by connect()
     
     def _register_handlers(self):
         """Register command handlers"""
@@ -267,12 +276,21 @@ class ForkliftServer:
         try:
             self.video_thread.start()
             self.command_thread.start()
+            self.overhead_camera_client.connect() # Start the overhead camera client thread
             
             logger.info("ForkliftServer main loop started. Use TOGGLE_AUTONAV command to test navigation.")
 
             while self.running:
+                # Get overhead camera frame
+                overhead_frame = self.overhead_camera_client.get_video_frame()
+                if overhead_frame is not None:
+                    # For now, just log that we got a frame. Processing will happen later.
+                    logger.debug(f"Received overhead frame of shape: {overhead_frame.shape}")
+                    # Here, you would pass overhead_frame to OverheadLocalizer to get self.robot_overhead_pose
+
                 if self.test_autonav_active:
-                    current_pose = self.video_streamer.shared_primary_target_pose
+                    current_pose = self.video_streamer.shared_primary_target_pose # This is from onboard camera
+                    # TODO: Replace current_pose with self.robot_overhead_pose for navigation decisions
                     
                     if self.autonav_stage == AUTONAV_STAGE_NAVIGATING:
                         if current_pose:
@@ -342,6 +360,12 @@ class ForkliftServer:
             if self.servo_controller:
                 logger.info("ForkliftServer._run_main_loop_async.finally: Stopping servo PWM.")
                 self.servo_controller.stop_pwm()
+            
+            # Disconnect overhead camera client
+            if self.overhead_camera_client:
+                logger.info("ForkliftServer cleanup: Disconnecting overhead camera client.")
+                self.overhead_camera_client.disconnect()
+
             logger.info("Main loop terminated. Proceeding to cleanup...")
             self.cleanup() # Primary call to cleanup
             # Wait for cleanup to complete before exiting application context

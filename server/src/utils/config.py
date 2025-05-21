@@ -85,4 +85,24 @@ SERVO_STEP_DELAY_SECONDS = 0.015 # Delay between each step (controls speed)
 
 # --- Logging Configuration ---
 LOG_LEVEL = "INFO"
-LOG_FILE = "server.log" 
+LOG_FILE = "server.log"
+
+# --- New Overhead Camera Configuration ---
+OVERHEAD_CAMERA_HOST = "192.168.0.100" # TODO: Update with actual Arena Server IP
+OVERHEAD_CAMERA_PORT = 5001
+ROBOT_OVERHEAD_ARUCO_ID = 50 # ArUco ID of the marker on top of the robot
+# ARUCO_DICTIONARY_OVERHEAD = cv2.aruco.DICT_6X6_50 # Defined globally if same as ARUCO_DICTIONARY
+# If you use a different dictionary for overhead, define it here and import cv2 if not already.
+
+# Example of static locations in pixel space (to be determined via calibration/manual clicking)
+# These are placeholders and need to be filled after implementing Sub-Phase 5.2
+OVERHEAD_VIEW_STATIC_LOCATIONS = {
+    "POLE_CENTER_PIXEL": (0, 0), # (x, y)
+    "POLE_RADIUS_PIXEL": 0,
+    "BIN_WHITE_START_PIXEL": (0, 0), # (x, y)
+    "BIN_BLACK_START_PIXEL": (0, 0), # (x, y)
+    "TRUCK_DESTINATION_PIXEL": (0, 0) # (x, y)
+}
+# --- End of New Overhead Camera Configuration ---
+
+# Make sure this is the last line if utility functions or further setup is needed below. 

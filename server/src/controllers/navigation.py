@@ -135,44 +135,89 @@ class NavigationController:
             self.motor_controller.stop()
             return False
 
-        turning_effort = self.turning_pid.compute(current_value=angle_to_marker_rad)
-        distance_effort = self.distance_pid.compute(current_value=current_planar_distance_m)
-
-        # Clamp PID outputs - these factors might need tuning based on typical effort values
-        # For angle, effort might be small (e.g., +/- PI/2 radians), for distance, effort could be larger.
-        # Consider the typical range of 'error' for each PID.
-        # Angle error range: e.g. -pi to +pi. Distance error: e.g. -1m to +1m.
-        # The division factor helps normalize this before applying max_speed.
-        clamped_turning_effort = max(-1.0, min(1.0, turning_effort / (math.pi/2) )) # Normalize by ~max expected angle error
-        clamped_distance_effort = max(-1.0, min(1.0, distance_effort / 1.0)) # Normalize by ~1m max expected distance error
-
-        turn_speed = clamped_turning_effort * self.max_turning_speed
-        forward_speed = -clamped_distance_effort * self.max_forward_speed
-
-        if 0 < abs(forward_speed) < self.min_effective_speed and not self.is_at_distance(current_planar_distance_m):
-            forward_speed = self.min_effective_speed * (1 if forward_speed > 0 else -1)
-        if 0 < abs(turn_speed) < self.min_effective_speed and not self.is_centered(angle_to_marker_rad):
-             turn_speed = self.min_effective_speed * (1 if turn_speed > 0 else -1)
-
+        # PID control for turning
         if not self.is_centered(angle_to_marker_rad):
-            logger.debug(f"Nav: Turning. Angle_err: {angle_to_marker_rad:.3f} rad, TurnEffortRaw: {turning_effort:.2f}, TurnSpeed: {turn_speed:.2f}")
-            self.motor_controller.stop()
-            if turn_speed > 0: 
-                self.motor_controller.turn_right(abs(turn_speed))
-            else: 
-                self.motor_controller.turn_left(abs(turn_speed))
-        elif not self.is_at_distance(current_planar_distance_m):
-            logger.debug(f"Nav: Driving. Dist_err: {(current_planar_distance_m - self.target_approach_distance_m):.3f} m, DistEffortRaw: {distance_effort:.2f}, FwdSpeed: {forward_speed:.2f}")
-            if forward_speed > 0:
-                self.motor_controller.drive_forward(abs(forward_speed))
-            else:
-                self.motor_controller.drive_backward(abs(forward_speed))
-        else:
-            logger.debug("Nav: Minor adjustments or at target (in navigate), stopping.")
-            self.motor_controller.stop()
-            return False
+            turn_effort_raw = self.turning_pid.compute(angle_to_marker_rad)
             
-        return True
+            # Scale and clamp turn_effort (example: if PID output is +/- 1, scale to max_turning_speed)
+            # Assuming PID output is already somewhat scaled or its Kp relates to desired PWM range.
+            # Here, we directly use it but clamp to max_turning_speed and ensure min_effective_speed.
+            direction = 1 if turn_effort_raw > 0 else -1 # Positive error means need to turn left (e.g. target is to the left)
+            
+            # Let's assume turn_effort_raw is a value that needs to be clamped by max_turning_speed
+            # And also needs to respect min_effective_speed if it's non-zero
+            abs_turn_effort = abs(turn_effort_raw) 
+            
+            # Clamp the magnitude of the turn speed
+            clamped_effort = min(abs_turn_effort, self.max_turning_speed)
+            
+            # Ensure minimum effective speed if there's any effort, otherwise speed is 0
+            effective_effort = 0
+            if abs_turn_effort > 1e-3: # Only apply min speed if there's some error
+                effective_effort = max(self.min_effective_speed, clamped_effort)
+            
+            final_turn_speed = direction * effective_effort
+            
+            logger.debug(f"Nav: Turning. Angle_err: {angle_to_marker_rad:.3f} rad, TurnPID_Raw: {turn_effort_raw:.2f}, FinalTurnSpeed: {final_turn_speed:.2f}")
+            if final_turn_speed > 0: # Positive speed for turn_left in this convention
+                logger.debug(f"Nav: Calling motor_controller.turn_left({abs(final_turn_speed):.2f})")
+                self.motor_controller.turn_left(abs(final_turn_speed))
+                logger.debug(f"Nav: Returned from motor_controller.turn_left({abs(final_turn_speed):.2f})")
+            elif final_turn_speed < 0: # Negative speed for turn_right
+                logger.debug(f"Nav: Calling motor_controller.turn_right({abs(final_turn_speed):.2f})")
+                self.motor_controller.turn_right(abs(final_turn_speed))
+                logger.debug(f"Nav: Returned from motor_controller.turn_right({abs(final_turn_speed):.2f})")
+            else:
+                # If final_turn_speed is 0 (e.g. error is tiny, PID output is zero, and min_effective_speed is also 0 or not applied)
+                # We might still be 'navigating' if distance is not okay.
+                # Or, if distance is also okay, the 'target reached' logic above should handle it.
+                # If we want to explicitly stop turning if speed is zero:
+                # self.motor_controller.stop() # This might be too aggressive, let distance PID handle it or rely on target_reached
+                logger.debug(f"Nav: Turning. FinalTurnSpeed is 0. No motor turn command issued.")
+                pass
+
+        # PID control for distance (only if angle is okay)
+        elif not self.is_at_distance(current_planar_distance_m):
+            forward_effort_raw = self.distance_pid.compute(current_planar_distance_m)
+            
+            direction = 1 if forward_effort_raw < 0 else -1 # Negative error (current > target) means move forward
+                                                            # Positive error (current < target) means move backward (or pid output needs inversion)
+                                                            # Let's adjust: PID compute error as (setpoint - current).
+                                                            # If current_planar_distance_m > self.target_approach_distance_m (too far), error is positive. Need to move forward.
+                                                            # If current_planar_distance_m < self.target_approach_distance_m (too close), error is negative. Need to move backward.
+                                                            # So, positive PID output should mean drive_forward.
+            
+            # Re-evaluating direction based on PID output meaning "correction"
+            # If PID output (forward_effort_raw) is positive, it means "increase speed forward"
+            # If PID output is negative, it means "increase speed backward" (or decrease speed forward)
+            
+            abs_forward_effort = abs(forward_effort_raw)
+            clamped_effort = min(abs_forward_effort, self.max_forward_speed)
+            
+            effective_effort = 0
+            if abs_forward_effort > 1e-3: # Only apply min speed if there's some error
+                effective_effort = max(self.min_effective_speed, clamped_effort)
+
+            final_forward_speed = 0
+            if forward_effort_raw > 1e-3: # Drive forward
+                final_forward_speed = effective_effort
+            elif forward_effort_raw < -1e-3: # Drive backward
+                final_forward_speed = -effective_effort
+            
+            logger.debug(f"Nav: Driving. Dist_err: {(current_planar_distance_m - self.target_approach_distance_m):.3f} m, DistPID_Raw: {forward_effort_raw:.2f}, FinalFwdSpeed: {final_forward_speed:.2f}")
+            if final_forward_speed > 0: # Moving towards target (positive speed = forward)
+                logger.debug(f"Nav: Calling motor_controller.drive_forward({abs(final_forward_speed):.2f})")
+                self.motor_controller.drive_forward(abs(final_forward_speed))
+                logger.debug(f"Nav: Returned from motor_controller.drive_forward({abs(final_forward_speed):.2f})")
+            elif final_forward_speed < 0: # Moving away from target (negative speed = backward)
+                logger.debug(f"Nav: Calling motor_controller.drive_backward({abs(final_forward_speed):.2f})")
+                self.motor_controller.drive_backward(abs(final_forward_speed))
+                logger.debug(f"Nav: Returned from motor_controller.drive_backward({abs(final_forward_speed):.2f})")
+            else:
+                logger.debug(f"Nav: Driving. FinalFwdSpeed is 0. No motor drive command issued.")
+                pass
+        
+        return True # Actively navigating
 
     def is_centered(self, angle_to_marker_rad: float) -> bool:
         return abs(angle_to_marker_rad) < self.angular_threshold_rad
