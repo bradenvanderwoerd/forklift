@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 from src.network.client import RobotClient
 import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -55,42 +56,60 @@ class KeyDisplay(QLabel):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Forklift Control")
-        self.setMinimumSize(950, 840)
-        self.resize(950, 840)
+        self.setWindowTitle("Forklift Control - Dual View")
+        self.setMinimumSize(1200, 700) # Adjusted for two feeds + controls
+        # self.resize(1200, 700) # Let minimum size dictate initial or use layout policy
         
-        # Initialize robot client
         self.robot_client = RobotClient()
         
-        # Create central widget and layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
+        main_layout = QVBoxLayout(central_widget)
         
-        # Video display
-        self.video_label = QLabel()
-        self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.video_label.setMinimumHeight(480)
-        layout.addWidget(self.video_label, stretch=2)
+        # --- Video Display Area (Horizontal Layout for two feeds) ---
+        video_area_layout = QHBoxLayout()
         
-        # Control panel - Revert to QHBoxLayout for the main control area
+        # Onboard Video display
+        onboard_video_group = QGroupBox("Onboard Camera (Pi)")
+        onboard_video_layout = QVBoxLayout(onboard_video_group)
+        self.onboard_video_label = QLabel("Waiting for Onboard Stream...")
+        self.onboard_video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.onboard_video_label.setMinimumSize(320, 240) # Smaller minimum
+        self.onboard_video_label.setStyleSheet("background-color: black; color: grey;")
+        onboard_video_layout.addWidget(self.onboard_video_label)
+        video_area_layout.addWidget(onboard_video_group, stretch=1)
+        
+        # Overhead Video display
+        overhead_video_group = QGroupBox("Overhead Camera (Warehouse)")
+        overhead_video_layout = QVBoxLayout(overhead_video_group)
+        self.overhead_video_label = QLabel("Waiting for Overhead Stream...")
+        self.overhead_video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.overhead_video_label.setMinimumSize(320, 240) # Smaller minimum
+        self.overhead_video_label.setStyleSheet("background-color: black; color: grey;")
+        overhead_video_layout.addWidget(self.overhead_video_label)
+        video_area_layout.addWidget(overhead_video_group, stretch=1)
+        
+        main_layout.addLayout(video_area_layout, stretch=2) # Video area takes more space
+        
+        # --- Control Panel Area --- (remains largely the same)
         control_panel = QWidget()
-        control_layout = QHBoxLayout(control_panel) # This is the main horizontal layout for controls
-        layout.addWidget(control_panel, stretch=3)
+        control_layout = QHBoxLayout(control_panel)
+        main_layout.addWidget(control_panel, stretch=1) # Control panel takes less space relatively
         
-        # --- Item 1: Speed control (far left) ---
+        # Speed control (far left)
         speed_layout = QVBoxLayout()
         self.speed_slider = QSlider(Qt.Orientation.Vertical)
         self.speed_slider.setRange(0, 100)
         self.speed_slider.setValue(50)
         self.speed_slider.valueChanged.connect(self.on_speed_change)
-        speed_layout.addWidget(QLabel("Speed"))
-        speed_layout.addWidget(self.speed_slider)
+        speed_label = QLabel("Speed")
+        speed_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        speed_layout.addWidget(speed_label)
+        speed_layout.addWidget(self.speed_slider, alignment=Qt.AlignmentFlag.AlignCenter)
         control_layout.addLayout(speed_layout)
         
-        # --- Item 2: WASD Controls & Servo Arrows (middle-left) ---
+        # WASD Controls & Servo Arrows (middle-left)
         wasd_layout = QGridLayout()
-        wasd_layout.setSpacing(10)
         self.w_key = KeyDisplay("W")
         self.a_key = KeyDisplay("A")
         self.s_key = KeyDisplay("S")
@@ -107,13 +126,9 @@ class MainWindow(QMainWindow):
         wasd_layout.addWidget(self.down_arrow_key, 1, 3)
         key_grid_widget = QWidget()
         key_grid_widget.setLayout(wasd_layout)
-        key_grid_outer_layout = QHBoxLayout() # Centering layout for the key grid
-        key_grid_outer_layout.addStretch(1)
-        key_grid_outer_layout.addWidget(key_grid_widget)
-        key_grid_outer_layout.addStretch(1)
-        control_layout.addLayout(key_grid_outer_layout)
+        control_layout.addWidget(key_grid_widget) # Directly add, can adjust stretch later if needed
 
-        # --- Item 3: Control buttons (Connect, AutoNav, E-Stop) (middle-right) ---
+        # Control buttons (Connect, AutoNav, E-Stop) (middle-right)
         action_buttons_layout = QVBoxLayout()
         self.connect_button = QPushButton("Connect")
         self.connect_button.clicked.connect(self.toggle_connection)
@@ -128,7 +143,7 @@ class MainWindow(QMainWindow):
         action_buttons_layout.addWidget(self.emergency_button)
         control_layout.addLayout(action_buttons_layout)
         
-        # --- Item 4: PID Tuning UI Section (far right) ---
+        # PID Tuning UI Section (far right)
         self.pid_tuning_group = QGroupBox("PID Tuning")
         pid_tuning_layout = QFormLayout(self.pid_tuning_group)
         pid_tuning_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
@@ -153,162 +168,116 @@ class MainWindow(QMainWindow):
         
         # Video update timer
         self.timer = QTimer()
-        self.timer.timeout.connect(self.update_video)
+        self.timer.timeout.connect(self.update_video_feeds) # Renamed method
         self.timer.start(33)  # ~30 FPS
         
         self.is_connected = False
         self.current_speed = 50
-        self.is_autonav_active = False # Client-side state for auto-navigation
+        self.is_autonav_active = False
         
     def keyPressEvent(self, event: QKeyEvent):
-        if not self.is_connected:
-            return
-            
+        if not self.is_connected: return
         key = event.key()
-
-        # Emergency stop via Spacebar always active
-        if key == Qt.Key.Key_Space:
-            self.space_key.set_active(True)
-            self.emergency_stop() # Call the enhanced emergency_stop method
-            return # Do not process other keys if space is pressed
-
-        if self.is_autonav_active: # If auto-nav is active, ignore other movement/servo keys
-            # We might want to allow some keys even in autonav, e.g., a different way to stop autonav
-            # For now, all movement keys are suppressed.
-            return
-            
-        if key == Qt.Key.Key_W:
-            self.w_key.set_active(True)
-            self.robot_client.send_command("drive", {"direction": "FORWARD", "speed": self.current_speed})
-        elif key == Qt.Key.Key_A:
-            self.a_key.set_active(True)
-            self.robot_client.send_command("drive", {"direction": "LEFT", "speed": self.current_speed})
-        elif key == Qt.Key.Key_S:
-            self.s_key.set_active(True)
-            self.robot_client.send_command("drive", {"direction": "BACKWARD", "speed": self.current_speed})
-        elif key == Qt.Key.Key_D:
-            self.d_key.set_active(True)
-            self.robot_client.send_command("drive", {"direction": "RIGHT", "speed": self.current_speed})
-        elif key == Qt.Key.Key_Up:
-            self.up_arrow_key.set_active(True)
-            self.robot_client.send_command("servo", {"step_down": True})
-        elif key == Qt.Key.Key_Down:
-            self.down_arrow_key.set_active(True)
-            self.robot_client.send_command("servo", {"step_up": True})
+        if key == Qt.Key.Key_Space: self.space_key.set_active(True); self.emergency_stop(); return
+        if self.is_autonav_active: return
+        if key == Qt.Key.Key_W: self.w_key.set_active(True); self.robot_client.send_command("drive", {"direction": "FORWARD", "speed": self.current_speed})
+        elif key == Qt.Key.Key_A: self.a_key.set_active(True); self.robot_client.send_command("drive", {"direction": "LEFT", "speed": self.current_speed})
+        elif key == Qt.Key.Key_S: self.s_key.set_active(True); self.robot_client.send_command("drive", {"direction": "BACKWARD", "speed": self.current_speed})
+        elif key == Qt.Key.Key_D: self.d_key.set_active(True); self.robot_client.send_command("drive", {"direction": "RIGHT", "speed": self.current_speed})
+        elif key == Qt.Key.Key_Up: self.up_arrow_key.set_active(True); self.robot_client.send_command("servo", {"step_down": True})
+        elif key == Qt.Key.Key_Down: self.down_arrow_key.set_active(True); self.robot_client.send_command("servo", {"step_up": True})
             
     def keyReleaseEvent(self, event: QKeyEvent):
         key = event.key()
-        if key == Qt.Key.Key_W:
-            self.w_key.set_active(False)
-        elif key == Qt.Key.Key_A:
-            self.a_key.set_active(False)
-        elif key == Qt.Key.Key_S:
-            self.s_key.set_active(False)
-        elif key == Qt.Key.Key_D:
-            self.d_key.set_active(False)
-        elif key == Qt.Key.Key_Space:
-            self.space_key.set_active(False)
-        elif key == Qt.Key.Key_Up:
-            self.up_arrow_key.set_active(False)
-        elif key == Qt.Key.Key_Down:
-            self.down_arrow_key.set_active(False)
+        active_map = {Qt.Key.Key_W: self.w_key, Qt.Key.Key_A: self.a_key, Qt.Key.Key_S: self.s_key, Qt.Key.Key_D: self.d_key,
+                        Qt.Key.Key_Space: self.space_key, Qt.Key.Key_Up: self.up_arrow_key, Qt.Key.Key_Down: self.down_arrow_key}
+        if key in active_map: active_map[key].set_active(False)
             
     def toggle_connection(self):
         if not self.is_connected:
+            logger.info("CLIENT: Attempting to connect...")
             self.robot_client.connect()
+            # Note: Connection status (self.is_connected) should ideally be updated based on feedback
+            # from the client thread or by checking client.is_connected after a short delay.
+            # For simplicity, we'll assume it connects quickly here for UI purposes.
             self.connect_button.setText("Disconnect")
             self.autonav_button.setEnabled(True)
-            if hasattr(self, 'pid_tuning_group') and self.pid_tuning_group:
-                 self.pid_tuning_group.setEnabled(True)
-            self.is_connected = True
+            if hasattr(self, 'pid_tuning_group'): self.pid_tuning_group.setEnabled(True)
+            self.is_connected = True # Assume connection success for UI feedback
+            logger.info("CLIENT: Connect button pressed. RobotClient.connect() called.")
         else:
-            if self.is_autonav_active:
-                self.toggle_autonav()
+            logger.info("CLIENT: Attempting to disconnect...")
+            if self.is_autonav_active: self.toggle_autonav() # Stop autonav if active
             self.robot_client.disconnect()
             self.connect_button.setText("Connect")
             self.autonav_button.setEnabled(False)
-            if hasattr(self, 'pid_tuning_group') and self.pid_tuning_group:
-                 self.pid_tuning_group.setEnabled(False)
+            if hasattr(self, 'pid_tuning_group'): self.pid_tuning_group.setEnabled(False)
             self.is_connected = False
-            
+            # Clear video feeds on disconnect
+            self.onboard_video_label.setText("Disconnected"); self.onboard_video_label.setStyleSheet("background-color: black; color: grey;")
+            self.overhead_video_label.setText("Disconnected"); self.overhead_video_label.setStyleSheet("background-color: black; color: grey;")
+            logger.info("CLIENT: Disconnect button pressed. RobotClient.disconnect() called.")
+
     def emergency_stop(self):
-        logger.info("CLIENT: Emergency Stop triggered!") # Add client-side log
+        logger.info("CLIENT: Emergency Stop triggered!")
         self.robot_client.send_command("stop")
         if self.is_autonav_active:
-            # We don't send another TOGGLE_AUTONAV here because the server-side e-stop
-            # should already be deactivating auto-nav. We just update client state.
             self.is_autonav_active = False
             self.autonav_button.setText("Start Auto-Nav")
-            self.autonav_button.setStyleSheet("") # Reset style
+            self.autonav_button.setStyleSheet("")
             logger.info("CLIENT: Auto-Nav deactivated due to Emergency Stop.")
-            # Potentially re-enable manual controls if they were disabled by autonav state
-            # This is implicitly handled as keyPressEvent will no longer be blocked by self.is_autonav_active
-        # Potentially re-enable manual controls if they were disabled by autonav state
-        # This is implicitly handled as keyPressEvent will no longer be blocked by self.is_autonav_active
         
     def toggle_autonav(self):
-        if not self.is_connected:
-            return
-
+        if not self.is_connected: return
         self.robot_client.send_command("TOGGLE_AUTONAV")
         self.is_autonav_active = not self.is_autonav_active
-        
-        if self.is_autonav_active:
-            self.autonav_button.setText("Stop Auto-Nav")
-            self.autonav_button.setStyleSheet("background-color: #FFA500; color: white;") # Orange for active
-            logger.info("CLIENT: Auto-Nav ACTIVATED.")
-            # Manual controls (WASD, arrows, speed slider) will be suppressed by self.is_autonav_active flag
-        else:
-            self.autonav_button.setText("Start Auto-Nav")
-            self.autonav_button.setStyleSheet("") # Reset style
-            logger.info("CLIENT: Auto-Nav DEACTIVATED.")
-            # Manual controls are now re-enabled implicitly
+        if self.is_autonav_active: self.autonav_button.setText("Stop Auto-Nav"); self.autonav_button.setStyleSheet("background-color: #FFA500;")
+        else: self.autonav_button.setText("Start Auto-Nav"); self.autonav_button.setStyleSheet("")
+        logger.info(f"CLIENT: Auto-Nav toggled to: {self.is_autonav_active}")
 
     def on_speed_change(self, value):
         self.current_speed = value
-        if self.is_connected and not self.is_autonav_active: # Only send if connected and not in auto-nav
-            self.robot_client.send_command("set_speed", value)
+        # No need to send if in autonav, server should ignore it anyway based on its logic
+        if self.is_connected and not self.is_autonav_active:
+            self.robot_client.send_command("drive", {"speed": self.current_speed, "action": "UPDATE_SPEED_ONLY"}) # Assuming server handles this
+            logger.debug(f"CLIENT: Speed slider changed to {self.current_speed}")
+
+    def _update_single_video_feed(self, frame: Optional[np.ndarray], label: QLabel, feed_name: str):
+        if frame is not None:
+            height, width, channel = frame.shape
+            bytes_per_line = 3 * width
+            q_image = QImage(frame.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
+            pixmap = QPixmap.fromImage(q_image)
+            scaled_pixmap = pixmap.scaled(label.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            label.setPixmap(scaled_pixmap)
+        # else: Do nothing, keep last frame or "Waiting..." text
             
-    def update_video(self):
-        if self.is_connected:
-            frame = self.robot_client.get_video_frame()
-            if frame is not None:
-                # Convert frame to QImage
-                height, width, channel = frame.shape
-                bytes_per_line = 3 * width
-                q_image = QImage(frame.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
-                pixmap = QPixmap.fromImage(q_image)
-                
-                # Scale pixmap to fit label while maintaining aspect ratio
-                scaled_pixmap = pixmap.scaled(self.video_label.size(), 
-                                            Qt.AspectRatioMode.KeepAspectRatio,
-                                            Qt.TransformationMode.SmoothTransformation)
-                self.video_label.setPixmap(scaled_pixmap)
+    def update_video_feeds(self):
+        if self.robot_client and self.robot_client.is_connected: # Check overall connection
+            onboard_frame = self.robot_client.get_onboard_video_frame()
+            self._update_single_video_feed(onboard_frame, self.onboard_video_label, "Onboard")
+            
+            overhead_frame = self.robot_client.get_overhead_video_frame()
+            self._update_single_video_feed(overhead_frame, self.overhead_video_label, "Overhead")
+        # If not connected, labels show "Disconnected" or "Waiting..."
 
     def apply_turning_pid_settings(self):
-        if not self.is_connected:
-            logger.warning("Not connected. Cannot apply PID settings.")
-            return
+        if not self.is_connected: return
         try:
-            kp = float(self.turning_pid_inputs["Kp"].text())
-            ki = float(self.turning_pid_inputs["Ki"].text())
-            kd = float(self.turning_pid_inputs["Kd"].text())
-            payload = {"kp": kp, "ki": ki, "kd": kd}
+            payload = {p: float(self.turning_pid_inputs[p].text()) for p in ["Kp", "Ki", "Kd"]}
             self.robot_client.send_command("SET_NAV_TURNING_PID", payload)
             logger.info(f"CLIENT: Sent SET_NAV_TURNING_PID with {payload}")
-        except ValueError:
-            logger.error("Invalid input for turning PID gains. Please enter numbers.")
+        except ValueError: logger.error("Invalid input for turning PID.")
 
     def apply_distance_pid_settings(self):
-        if not self.is_connected:
-            logger.warning("Not connected. Cannot apply PID settings.")
-            return
+        if not self.is_connected: return
         try:
-            kp = float(self.distance_pid_inputs["Kp"].text())
-            ki = float(self.distance_pid_inputs["Ki"].text())
-            kd = float(self.distance_pid_inputs["Kd"].text())
-            payload = {"kp": kp, "ki": ki, "kd": kd}
+            payload = {p: float(self.distance_pid_inputs[p].text()) for p in ["Kp", "Ki", "Kd"]}
             self.robot_client.send_command("SET_NAV_DISTANCE_PID", payload)
             logger.info(f"CLIENT: Sent SET_NAV_DISTANCE_PID with {payload}")
-        except ValueError:
-            logger.error("Invalid input for distance PID gains. Please enter numbers.") 
+        except ValueError: logger.error("Invalid input for distance PID.")
+
+    def closeEvent(self, event):
+        logger.info("CLIENT: MainWindow closeEvent triggered. Disconnecting client.")
+        self.robot_client.disconnect() # Ensure client disconnects when window is closed
+        super().closeEvent(event) 

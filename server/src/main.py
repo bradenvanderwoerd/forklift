@@ -13,10 +13,12 @@ from .controllers.motor import MotorController
 from .controllers.servo import ServoController
 from .controllers.navigation import NavigationController
 from .network.video_stream import VideoStreamer
+from .network.overhead_video_stream import OverheadStreamer
 from .network.tcp_server import CommandServer
 from .network.overhead_camera_client import WarehouseCameraClient
 from .utils.config import (
     HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, 
+    OVERHEAD_VIDEO_WEBSOCKET_PORT,
     SERVO_PWM_PIN, MANUAL_TURN_SPEED, FORK_DOWN_POSITION, FORK_UP_POSITION,
     AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, AUTONAV_FORK_CARRY_ANGLE,
     OVERHEAD_CAMERA_HOST, OVERHEAD_CAMERA_PORT
@@ -24,8 +26,11 @@ from .utils.config import (
 
 # Set up logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -36,13 +41,14 @@ AUTONAV_STAGE_LOWERING_FORKS = "LOWERING_FORKS"
 AUTONAV_STAGE_LIFTING_FORKS = "LIFTING_FORKS"
 # AUTONAV_STAGE_CARRYING_BOX = "CARRYING_BOX" # Future state if needed
 
-def check_port_availability(port: int) -> bool:
-    """Check if a port is available for use."""
+def check_port_availability(port: int, host: str = HOST) -> bool:
+    """Check if a port is available for use on a given host."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
-            s.bind((HOST, port))
+            s.bind((host, port))
             return True
-        except socket.error:
+        except socket.error as e:
+            logger.error(f"Port check failed for {host}:{port} - {e}")
             return False
 
 class ForkliftServer:
@@ -58,13 +64,13 @@ class ForkliftServer:
         self.autonav_stage = AUTONAV_STAGE_IDLE # Current stage of auto-navigation
         self.robot_overhead_pose = None # To store (x_pixel, y_pixel, theta_pixel_frame)
         
-        # Check port availability using new config variable names
+        # Check port availability
         if not check_port_availability(SERVER_TCP_PORT):
-            logger.error(f"Command port {SERVER_TCP_PORT} is already in use!")
-            sys.exit(1)
+            sys.exit(f"Command port {SERVER_TCP_PORT} is already in use!")
         if not check_port_availability(SERVER_VIDEO_UDP_PORT):
-            logger.error(f"Video port {SERVER_VIDEO_UDP_PORT} is already in use!")
-            sys.exit(1)
+            sys.exit(f"Onboard video port {SERVER_VIDEO_UDP_PORT} is already in use!")
+        if not check_port_availability(OVERHEAD_VIDEO_WEBSOCKET_PORT):
+            sys.exit(f"Overhead video port {OVERHEAD_VIDEO_WEBSOCKET_PORT} is already in use!")
         
         # Initialize hardware controllers
         self.motor_controller = MotorController()
@@ -81,6 +87,7 @@ class ForkliftServer:
         
         # Initialize network components, passing configured host and ports
         self.video_streamer = VideoStreamer(host=HOST, port=SERVER_VIDEO_UDP_PORT)
+        self.overhead_video_streamer = OverheadStreamer(host=HOST, port=OVERHEAD_VIDEO_WEBSOCKET_PORT)
         self.command_server = CommandServer(host=HOST, port=SERVER_TCP_PORT)
         
         # Register command handlers
@@ -91,8 +98,9 @@ class ForkliftServer:
         signal.signal(signal.SIGTERM, self._handle_shutdown)
         
         # Create threads for servers
-        self.video_thread = threading.Thread(target=self._run_video_server)
-        self.command_thread = threading.Thread(target=self._run_command_server)
+        self.video_thread = threading.Thread(target=self._run_video_server, name="OnboardVideoStreamThread")
+        self.overhead_video_thread = threading.Thread(target=self._run_overhead_video_server, name="OverheadVideoStreamThread")
+        self.command_thread = threading.Thread(target=self._run_command_server, name="CommandServerThread")
         # Overhead camera client manages its own thread, started by connect()
     
     def _register_handlers(self):
@@ -109,79 +117,57 @@ class ForkliftServer:
         if self.test_autonav_active:
             logger.info("Auto-nav active, drive command ignored.")
             return
-        logger.info("--- _handle_drive_command ENTERED ---")
-        logger.info(f"Received DRIVE command data: {data}")
-
-        command_value = data.get("value", {}) 
-
+        logger.debug(f"Received DRIVE command data: {data}")
+        command_value = data.get("value", {})
         direction = command_value.get("direction", "NONE")
         speed = command_value.get("speed", 0)
-        action = command_value.get("action", "START") 
-
-        logger.info(f"Parsed action: {action}, direction: {direction}, speed: {speed}")
-
+        action = command_value.get("action", "START")
         if action == "STOP" or direction == "NONE":
-            logger.info("Executing STOP action or direction is NONE")
             self.motor_controller.stop()
-            return
-
-        if direction == "FORWARD":
-            logger.info("Executing FORWARD action")
+        elif direction == "FORWARD":
             self.motor_controller.drive_forward(speed)
         elif direction == "BACKWARD":
-            logger.info("Executing BACKWARD action")
             self.motor_controller.drive_backward(speed)
         elif direction == "LEFT":
-            logger.info(f"Executing LEFT action with fixed speed {MANUAL_TURN_SPEED}")
             self.motor_controller.turn_right(MANUAL_TURN_SPEED)
         elif direction == "RIGHT":
-            logger.info(f"Executing RIGHT action with fixed speed {MANUAL_TURN_SPEED}")
             self.motor_controller.turn_left(MANUAL_TURN_SPEED)
         else:
-            logger.info("Executing ELSE (STOP) action")
             self.motor_controller.stop()
     
     def _handle_motor_command(self, data: Dict[str, Any]):
         if self.test_autonav_active:
             logger.info("Auto-nav active, motor command ignored.")
             return
-        logger.info(f"Received MOTOR command: {data}")
+        logger.debug(f"Received MOTOR command: {data}")
         speed = data.get('speed', 0)
         self.motor_controller.set_speed(speed)
     
     def _handle_servo_command(self, data: Dict[str, Any]):
-        logger.info(f"Received SERVO command: {data}")
-        
-        command_value = data.get("value", {}) # Get the nested 'value' dictionary
-        position = command_value.get('position')
-        action = command_value.get("action", "SET") # Default to SET if not specified
-
-        logger.info(f"Parsed servo action: {action}, position: {position}")
-
+        logger.debug(f"Received SERVO command: {data}")
+        value = data.get("value", {})
+        position = value.get('position')
+        action = value.get("action", "SET")
         if action == "SET" and position is not None:
             try:
-                angle = float(position) # Ensure position is a number
-                self.servo_controller.set_position(angle)
-                logger.info(f"Servo position set to: {angle}")
+                self.servo_controller.set_position(float(position))
             except ValueError:
-                logger.error(f"Invalid servo position received: {position}. Must be a number.")
-        elif command_value.get('step_up'): 
-            logger.info("Servo command: Go to UP position") # Will go to FORK_UP_POSITION (0)
+                logger.error(f"Invalid servo position: {position}")
+        elif value.get('step_up'):
             self.servo_controller.go_to_up_position()
-        elif command_value.get('step_down'):
-            logger.info("Servo command: Go to DOWN position") # Will go to FORK_DOWN_POSITION (80)
+        elif value.get('step_down'):
             self.servo_controller.go_to_down_position()
         else:
-            logger.warning(f"Unknown servo action or missing position in command: {command_value}")
+            logger.warning(f"Unknown servo action or missing position in command: {value}")
     
     def _handle_emergency_stop(self, data: Dict[str, Any]):
         """Handle emergency stop command"""
-        logger.info("ForkliftServer._handle_emergency_stop(): Emergency stop received. Stopping motors & deactivating autonav.")
+        logger.info("EMERGENCY STOP received.")
         self.motor_controller.stop()
         if self.test_autonav_active:
             self.test_autonav_active = False
             self.autonav_stage = AUTONAV_STAGE_IDLE
-            logger.info("Emergency stop: Autonomous navigation DEACTIVATED.")
+            logger.info("Autonomous navigation DEACTIVATED by E-Stop.")
         
         # Stop navigation controller
         if hasattr(self, 'navigation_controller') and self.navigation_controller:
@@ -198,12 +184,12 @@ class ForkliftServer:
         self.test_autonav_active = not self.test_autonav_active
         if self.test_autonav_active:
             self.autonav_stage = AUTONAV_STAGE_NAVIGATING
-            logger.info(f"Autonomous navigation test mode ACTIVATED. Stage: {self.autonav_stage}")
+            logger.info(f"Autonomous navigation ACTIVATED. Stage: {self.autonav_stage}")
             # Ensure servo is in a known state if needed, e.g., up or carry.
             # For now, we assume it starts appropriately or the first action will set it.
         else:
             self.autonav_stage = AUTONAV_STAGE_IDLE
-            logger.info(f"Autonomous navigation test mode DEACTIVATED. Stage: {self.autonav_stage}")
+            logger.info(f"Autonomous navigation DEACTIVATED.")
             if hasattr(self, 'navigation_controller') and self.navigation_controller:
                 self.navigation_controller.clear_target() # Stops motors
             # Optionally, reset servo to a default position, e.g., down
@@ -218,13 +204,11 @@ class ForkliftServer:
         
         pid_values = data.get("value", {})
         try:
-            kp = float(pid_values.get("kp"))
-            ki = float(pid_values.get("ki"))
-            kd = float(pid_values.get("kd"))
+            kp, ki, kd = float(pid_values["kp"]), float(pid_values["ki"]), float(pid_values["kd"])
             self.navigation_controller.update_turning_pid_gains(kp, ki, kd)
-            logger.info(f"Turning PID gains updated via command: Kp={kp}, Ki={ki}, Kd={kd}")
-        except (TypeError, ValueError) as e:
-            logger.error(f"Invalid PID values received for turning PID: {pid_values}. Error: {e}")
+            logger.info(f"Turning PID updated: Kp={kp}, Ki={ki}, Kd={kd}")
+        except (TypeError, ValueError, KeyError) as e:
+            logger.error(f"Invalid turning PID values: {pid_values}. Error: {e}")
 
     def _handle_set_nav_distance_pid(self, data: Dict[str, Any]):
         """Handles command to set distance PID gains for NavigationController."""
@@ -234,20 +218,26 @@ class ForkliftServer:
         
         pid_values = data.get("value", {})
         try:
-            kp = float(pid_values.get("kp"))
-            ki = float(pid_values.get("ki"))
-            kd = float(pid_values.get("kd"))
+            kp, ki, kd = float(pid_values["kp"]), float(pid_values["ki"]), float(pid_values["kd"])
             self.navigation_controller.update_distance_pid_gains(kp, ki, kd)
-            logger.info(f"Distance PID gains updated via command: Kp={kp}, Ki={ki}, Kd={kd}")
-        except (TypeError, ValueError) as e:
-            logger.error(f"Invalid PID values received for distance PID: {pid_values}. Error: {e}")
+            logger.info(f"Distance PID updated: Kp={kp}, Ki={ki}, Kd={kd}")
+        except (TypeError, ValueError, KeyError) as e:
+            logger.error(f"Invalid distance PID values: {pid_values}. Error: {e}")
     
     def _run_video_server(self):
         """Run video server in a separate thread"""
         try:
             self.video_streamer.start()
         except Exception as e:
-            logger.error(f"Error in video server thread: {e}")
+            logger.error(f"Error in onboard video server thread: {e}")
+            self.running = False
+    
+    def _run_overhead_video_server(self):
+        """Run overhead video server in a separate thread"""
+        try:
+            self.overhead_video_streamer.start()
+        except Exception as e:
+            logger.error(f"Error in overhead video server thread: {e}")
             self.running = False
     
     def _run_command_server(self):
@@ -260,21 +250,19 @@ class ForkliftServer:
     
     def _handle_shutdown(self, signum, frame):
         """Handle shutdown signal"""
-        logger.info(f"\nShutdown signal {signum} received. Telling main loop to stop...")
+        logger.info(f"Shutdown signal {signum} received. Telling main loop to stop...")
         self.running = False
-        # self.cleanup() # Removed direct call from here
-        # if not self.cleanup_complete.wait(timeout=5.0): # Removed wait from here
-        #     logger.warning("Cleanup did not complete in time from signal handler")
-        # sys.exit(0) # Avoid calling sys.exit from a signal handler in a threaded app if possible
     
     def start(self):
         """Start server components"""
-        logger.info("Starting server...")
-        logger.info(f"Command server will listen on {HOST}:{SERVER_TCP_PORT}")
-        logger.info(f"Video server will listen on {HOST}:{SERVER_VIDEO_UDP_PORT}")
+        logger.info("Starting ForkliftServer...")
+        logger.info(f"Command server on {HOST}:{SERVER_TCP_PORT}")
+        logger.info(f"Onboard Video (PiCam) on ws://{HOST}:{SERVER_VIDEO_UDP_PORT}")
+        logger.info(f"Overhead Video (Warehouse) on ws://{HOST}:{OVERHEAD_VIDEO_WEBSOCKET_PORT}")
         
         try:
             self.video_thread.start()
+            self.overhead_video_thread.start()
             self.command_thread.start()
             self.overhead_camera_client.connect() # Start the overhead camera client thread
             
@@ -284,18 +272,18 @@ class ForkliftServer:
                 # Get overhead camera frame
                 overhead_frame = self.overhead_camera_client.get_video_frame()
                 if overhead_frame is not None:
-                    logger.debug(f"Received overhead frame of shape: {overhead_frame.shape}. Forwarding to VideoStreamer.")
-                    self.video_streamer.set_external_frame(overhead_frame)
+                    logger.debug(f"Received overhead frame of shape: {overhead_frame.shape}. Forwarding to OverheadStreamer.")
+                    self.overhead_video_streamer.set_frame(overhead_frame)
                     # Here, you would also pass overhead_frame to OverheadLocalizer to get self.robot_overhead_pose
                 # else: VideoStreamer will use its own Pi camera frame by default
 
                 if self.test_autonav_active:
-                    current_pose = self.video_streamer.shared_primary_target_pose # This is from onboard camera
+                    current_pose_onboard = self.video_streamer.shared_primary_target_pose # This is from onboard camera
                     # TODO: Replace current_pose with self.robot_overhead_pose for navigation decisions
                     
                     if self.autonav_stage == AUTONAV_STAGE_NAVIGATING:
-                        if current_pose:
-                            tvec, rvec = current_pose
+                        if current_pose_onboard:
+                            tvec, rvec = current_pose_onboard
                             self.navigation_controller.set_target(tvec, rvec) 
                             
                             nav_still_moving = self.navigation_controller.navigate()
@@ -350,7 +338,7 @@ class ForkliftServer:
                             self.navigation_controller.clear_target()
                         self.autonav_stage = AUTONAV_STAGE_IDLE
                         
-                time.sleep(0.05) # Main loop delay
+                time.sleep(0.02) # Main loop tick rate (50Hz)
                 
         except KeyboardInterrupt:
             logger.info("\nKeyboard interrupt (Ctrl+C) received. Initiating shutdown...")
@@ -381,7 +369,7 @@ class ForkliftServer:
             return
             
         try:
-            logger.info("Cleaning up...")
+            logger.info("Cleaning up ForkliftServer resources...")
 
             # Ensure motors are stopped and servo is reset first
             try:
@@ -403,6 +391,12 @@ class ForkliftServer:
                 logger.error(f"Error stopping video streamer: {e}")
                 
             try:
+                self.overhead_video_streamer.stop()
+                logger.info("Overhead video streamer stopped")
+            except Exception as e:
+                logger.error(f"Error stopping overhead video streamer: {e}")
+                
+            try:
                 self.command_server.stop()
                 logger.info("Command server stopped")
             except Exception as e:
@@ -414,6 +408,12 @@ class ForkliftServer:
                 logger.info("Video streamer cleaned up")
             except Exception as e:
                 logger.error(f"Error cleaning up video streamer: {e}")
+                
+            try:
+                self.overhead_video_streamer.cleanup()
+                logger.info("Overhead video streamer cleaned up")
+            except Exception as e:
+                logger.error(f"Error cleaning up overhead video streamer: {e}")
                 
             try:
                 self.command_server.cleanup()

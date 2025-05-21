@@ -7,8 +7,8 @@ load_dotenv()
 
 # --- Server Network Configuration ---
 HOST = os.getenv("HOST", "0.0.0.0") # From old config.py
-SERVER_TCP_PORT = int(os.getenv("COMMAND_PORT", "3456")) # Keep 4001 as per doc, allow override
-SERVER_VIDEO_UDP_PORT = int(os.getenv("VIDEO_PORT", "3457")) # Keep 5001 as per doc, allow override
+SERVER_TCP_PORT = int(os.getenv("COMMAND_PORT", "3456"))
+SERVER_VIDEO_UDP_PORT = int(os.getenv("VIDEO_PORT", "3457"))
 
 # --- Video Stream Configuration ---
 VIDEO_WIDTH = 640  # From old config.py
@@ -86,9 +86,10 @@ SERVO_STEP_DEGREES = 1          # Degrees to move the servo per step for smooth 
 SERVO_STEP_DELAY_SECONDS = 0.015 # Delay between each step (controls speed)
 
 # --- New Overhead Camera Configuration ---
-OVERHEAD_CAMERA_HOST = "192.168.0.100"
+OVERHEAD_CAMERA_HOST = "192.168.0.100" # TODO: Update with actual Arena Server IP
 OVERHEAD_CAMERA_PORT = 4001
 ROBOT_OVERHEAD_ARUCO_ID = 50 # ArUco ID of the marker on top of the robot
+OVERHEAD_VIDEO_WEBSOCKET_PORT = 3458 # New port for streaming overhead video via WebSocket
 # ARUCO_DICTIONARY_OVERHEAD = cv2.aruco.DICT_6X6_50 # Defined globally if same as ARUCO_DICTIONARY
 # If you use a different dictionary for overhead, define it here and import cv2 if not already.
 
