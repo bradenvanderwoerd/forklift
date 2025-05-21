@@ -58,6 +58,7 @@ class OverheadStreamer:
                     
                     await websocket.send(encoded_jpeg.tobytes())
                     client_queue.task_done()
+                    await asyncio.sleep(0.08) # Add a small delay to regulate sending rate to client
 
                 except asyncio.TimeoutError:
                     # Check if websocket is still alive or if we should break
