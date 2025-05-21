@@ -74,7 +74,7 @@ NAV_DISTANCE_PID_KP = 1.5  # Proportional gain for distance PID
 NAV_DISTANCE_PID_KI = 0.03 # Integral gain for distance PID
 NAV_DISTANCE_PID_KD = 0.3  # Derivative gain for distance PID
 
-NAV_MAX_TURNING_SPEED = 30       # Maximum speed for turning (PWM duty cycle)
+NAV_MAX_TURNING_SPEED = 10       # Maximum speed for turning (PWM duty cycle)
 MANUAL_TURN_SPEED = 1            # Fixed speed for MANUAL turning actions (0-100 for motor controller)
 NAV_MAX_FORWARD_SPEED = 35       # Maximum speed for forward/backward movement (PWM duty cycle)
 NAV_MIN_EFFECTIVE_SPEED = 5      # Minimum speed to ensure motors engage if PID output is too low but error exists
