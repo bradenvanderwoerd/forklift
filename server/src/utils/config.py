@@ -7,8 +7,8 @@ load_dotenv()
 
 # --- Server Network Configuration ---
 HOST = os.getenv("HOST", "0.0.0.0") # From old config.py
-SERVER_TCP_PORT = int(os.getenv("COMMAND_PORT", "4001")) # Keep 4001 as per doc, allow override
-SERVER_VIDEO_UDP_PORT = int(os.getenv("VIDEO_PORT", "5001")) # Keep 5001 as per doc, allow override
+SERVER_TCP_PORT = int(os.getenv("COMMAND_PORT", "3456")) # Keep 4001 as per doc, allow override
+SERVER_VIDEO_UDP_PORT = int(os.getenv("VIDEO_PORT", "3457")) # Keep 5001 as per doc, allow override
 
 # --- Video Stream Configuration ---
 VIDEO_WIDTH = 640  # From old config.py
@@ -57,6 +57,8 @@ MAX_STEERING = 100   # From old config.py (Note: steering logic might not use th
 # --- Logging Configuration ---
 LOG_LEVEL = "INFO"
 LOG_FILE = "server.log"
+LOG_MAX_BYTES = 1024 * 1024 * 5  # 5 MB max log file size
+LOG_BACKUP_COUNT = 3  # Number of backup log files to keep
 
 # --- Navigation Controller Configuration ---
 NAV_TARGET_APPROACH_DISTANCE_M = 0.15  # Target distance to stop from marker (in meters)
@@ -83,13 +85,9 @@ NAV_MIN_EFFECTIVE_SPEED = 1      # Minimum speed to ensure motors engage if PID 
 SERVO_STEP_DEGREES = 1          # Degrees to move the servo per step for smooth movement
 SERVO_STEP_DELAY_SECONDS = 0.015 # Delay between each step (controls speed)
 
-# --- Logging Configuration ---
-LOG_LEVEL = "INFO"
-LOG_FILE = "server.log"
-
 # --- New Overhead Camera Configuration ---
-OVERHEAD_CAMERA_HOST = "192.168.0.100" # TODO: Update with actual Arena Server IP
-OVERHEAD_CAMERA_PORT = 5001
+OVERHEAD_CAMERA_HOST = "192.168.0.100"
+OVERHEAD_CAMERA_PORT = 4001
 ROBOT_OVERHEAD_ARUCO_ID = 50 # ArUco ID of the marker on top of the robot
 # ARUCO_DICTIONARY_OVERHEAD = cv2.aruco.DICT_6X6_50 # Defined globally if same as ARUCO_DICTIONARY
 # If you use a different dictionary for overhead, define it here and import cv2 if not already.
