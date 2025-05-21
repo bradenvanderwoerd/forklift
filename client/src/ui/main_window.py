@@ -145,6 +145,7 @@ class MainWindow(QMainWindow):
         
         # PID Tuning UI Section (far right)
         self.pid_tuning_group = QGroupBox("PID Tuning")
+        self.pid_tuning_group.setMaximumWidth(250) # Set a maximum width for the PID tuning group
         pid_tuning_layout = QFormLayout(self.pid_tuning_group)
         pid_tuning_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         self.turning_pid_inputs = {}

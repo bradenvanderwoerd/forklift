@@ -20,7 +20,7 @@ class OverheadStreamer:
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.external_frame: Optional[np.ndarray] = None
         self.external_frame_lock = threading.Lock()
-        self.jpeg_quality = 75 # Default JPEG quality
+        self.jpeg_quality = 50 # Reduced JPEG quality from 75 to 50
 
     def set_frame(self, frame: np.ndarray):
         """Sets the current frame to be streamed."""
@@ -40,7 +40,7 @@ class OverheadStreamer:
 
     async def _handle_client(self, websocket, path):
         logger.info(f"OverheadStreamer: New client connected from {websocket.remote_address} to {self.host}:{self.port}")
-        client_queue = asyncio.Queue(maxsize=5) # Give a small buffer
+        client_queue = asyncio.Queue(maxsize=15) # Increased buffer size from 5 to 15
         self.clients.add(client_queue)
         try:
             while self.running:
