@@ -261,6 +261,11 @@ class ForkliftServer:
         logger.info(f"Onboard Video (PiCam) on ws://{HOST}:{SERVER_VIDEO_UDP_PORT}")
         logger.info(f"Overhead Video (Warehouse) on ws://{HOST}:{OVERHEAD_VIDEO_WEBSOCKET_PORT}")
         
+        # Variables for tracking overhead camera FPS on Pi
+        self.overhead_frames_received_count = 0
+        self.last_overhead_log_time = time.time()
+        self.log_interval_seconds = 5.0 # Log FPS every 5 seconds
+        
         try:
             self.video_thread.start()
             self.overhead_video_thread.start()
@@ -273,10 +278,23 @@ class ForkliftServer:
                 # Get overhead camera frame
                 overhead_frame = self.overhead_camera_client.get_video_frame()
                 if overhead_frame is not None:
-                    logger.debug(f"Received overhead frame of shape: {overhead_frame.shape}. Forwarding to OverheadStreamer.")
+                    self.overhead_frames_received_count += 1
+                    # logger.debug(f"Received overhead frame of shape: {overhead_frame.shape}. Forwarding to OverheadStreamer.") # This is already debug
                     self.overhead_video_streamer.set_frame(overhead_frame)
                     # Here, you would also pass overhead_frame to OverheadLocalizer to get self.robot_overhead_pose
                 # else: VideoStreamer will use its own Pi camera frame by default
+
+                # Log overhead camera FPS periodically
+                current_time_for_fps_log = time.time()
+                if current_time_for_fps_log - self.last_overhead_log_time >= self.log_interval_seconds:
+                    elapsed_time = current_time_for_fps_log - self.last_overhead_log_time
+                    if elapsed_time > 0: # Avoid division by zero if interval is very small or time didn't advance
+                        fps = self.overhead_frames_received_count / elapsed_time
+                        logger.info(f"Overhead Camera FPS (Pi perspective): {fps:.2f} FPS ({self.overhead_frames_received_count} frames in {elapsed_time:.2f}s)")
+                    else:
+                        logger.info(f"Overhead Camera FPS (Pi perspective): Unable to calculate FPS, zero elapsed time. Frames: {self.overhead_frames_received_count}")
+                    self.overhead_frames_received_count = 0
+                    self.last_overhead_log_time = current_time_for_fps_log
 
                 if self.test_autonav_active:
                     current_pose_onboard = self.video_streamer.shared_primary_target_pose # This is from onboard camera

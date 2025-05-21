@@ -1,6 +1,6 @@
 import asyncio
 import websockets
-from websockets.typing import State
+from websockets.connection import State
 import json
 import cv2
 import numpy as np
