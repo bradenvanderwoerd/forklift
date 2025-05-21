@@ -101,12 +101,19 @@ class NavigationController:
         logger.info(f"NavigationController: New target set. tvec: {tvec.flatten().round(3)}")
 
     def clear_target(self):
+        # Target is lost or reached, or being explicitly cleared
+        logger.info("NavigationController.clear_target(): Called. Stopping motors and resetting PIDs.") # More specific
         self.current_target_pose = None
         self.motor_controller.stop()
-        logger.info("NavigationController: Target cleared, stopping motors.")
+        # Reset PIDs when target is cleared so they don't carry over stale values
+        self.turning_pid.reset()
+        self.distance_pid.reset()
+        # logger.info("NavigationController: Target cleared, PIDs reset.") # Redundant with above
 
-    def navigate(self) -> bool:
-        if self.current_target_pose is None:
+    def navigate(self) -> bool: # Returns True if actively navigating, False if at target or no target
+        if not self.current_target_pose:
+            # This case should ideally be preempted by clear_target() if pose becomes None by external factors.
+            # logger.debug("Navigate called with no current target pose.") # Can be noisy
             return False
 
         tvec, rvec = self.current_target_pose

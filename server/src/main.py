@@ -167,12 +167,11 @@ class ForkliftServer:
     
     def _handle_emergency_stop(self, data: Dict[str, Any]):
         """Handle emergency stop command"""
-        logger.info(f"--- EMERGENCY STOP RECEIVED --- Data: {data}")
-        
-        # Deactivate auto-navigation if it was active
+        logger.info("ForkliftServer._handle_emergency_stop(): Emergency stop received. Stopping motors & deactivating autonav.")
+        self.motor_controller.stop()
         if self.test_autonav_active:
             self.test_autonav_active = False
-            self.autonav_stage = AUTONAV_STAGE_IDLE # Reset stage
+            self.autonav_stage = AUTONAV_STAGE_IDLE
             logger.info("Emergency stop: Autonomous navigation DEACTIVATED.")
         
         # Stop navigation controller
@@ -290,17 +289,29 @@ class ForkliftServer:
                                 angle_to_marker_rad = math.atan2(x_cam, z_cam)
                                 current_planar_distance_m = math.sqrt(x_cam**2 + z_cam**2)
                                 if self.navigation_controller.is_at_target(angle_to_marker_rad, current_planar_distance_m):
-                                    logger.info("AutoNav: Target Reached! Stage: NAVIGATING -> LOWERING_FORKS")
-                                    self.navigation_controller.clear_target() 
+                                    logger.info("ForkliftServer (AutoNav): Target Reached (by main loop check)! Transitioning stage.")
+                                    self.navigation_controller.clear_target() # This calls stop
                                     self.autonav_stage = AUTONAV_STAGE_LOWERING_FORKS
-                            # else: Navigation.navigate() would have already logged and stopped motors if z_cam <=0
-
-                        else:
-                            # No primary target visible, clear navigation target if it was set
-                            if self.navigation_controller.current_target_pose is not None:
-                                 logger.info("Test AutoNav: Primary target lost from view, clearing navigation.")
-                                 self.navigation_controller.clear_target()
-                                 
+                                    self.servo_controller.set_position(AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, blocking=True)
+                                    logger.info("AutoNav: Forks lowered. Simulating pickup (delay 1s). Stage: LOWERING_FORKS -> LIFTING_FORKS")
+                                    time.sleep(1.0) # Simulate pickup time
+                                    self.autonav_stage = AUTONAV_STAGE_LIFTING_FORKS
+                                else: # Not at target by main.py's check
+                                    if not nav_active: 
+                                        # This case can happen if navigate() itself decided it's at target
+                                        # and returned False.
+                                        logger.info("ForkliftServer (AutoNav): navigate() returned False (target reached by its own logic). Transitioning stage.")
+                                        self.navigation_controller.clear_target() # This calls stop
+                                        self.autonav_stage = AUTONAV_STAGE_LOWERING_FORKS
+                                        self.servo_controller.set_position(AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, blocking=True)
+                                    logger.info("AutoNav: Forks lowered. Simulating pickup (delay 1s). Stage: LOWERING_FORKS -> LIFTING_FORKS")
+                                    time.sleep(1.0) # Simulate pickup time
+                                    self.autonav_stage = AUTONAV_STAGE_LIFTING_FORKS
+                        else: # No current_pose (target lost)
+                            logger.info("ForkliftServer (AutoNav): Primary target lost from view. Clearing navigation.")
+                            self.navigation_controller.clear_target() # This calls stop
+                            # Potentially stop autonav or try to re-acquire
+                            # For now, just stop motors and wait for target to reappear
                     elif self.autonav_stage == AUTONAV_STAGE_LOWERING_FORKS:
                         logger.info(f"AutoNav: Stage LOWERING_FORKS. Lowering forks to {AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE} deg.")
                         self.servo_controller.set_position(AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, blocking=True)
@@ -332,6 +343,11 @@ class ForkliftServer:
             logger.info("\nKeyboard interrupt (Ctrl+C) received. Initiating shutdown...")
             self.running = False # Ensure running is false, though signal handler should also do this
         finally:
+            logger.info("ForkliftServer._run_main_loop_async.finally: Main loop ended or exception. Ensuring motors stopped.")
+            self.motor_controller.stop()
+            if self.servo_controller:
+                logger.info("ForkliftServer._run_main_loop_async.finally: Stopping servo PWM.")
+                self.servo_controller.stop_pwm()
             logger.info("Main loop terminated. Proceeding to cleanup...")
             self.cleanup() # Primary call to cleanup
             # Wait for cleanup to complete before exiting application context

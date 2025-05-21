@@ -122,7 +122,7 @@ class ServoController:
     def go_to_autonav_carry_position(self, blocking: bool = True):
         logger.info(f"Servo: Moving to AUTONAV_FORK_CARRY_ANGLE ({AUTONAV_FORK_CARRY_ANGLE} deg).")
         self.set_position(AUTONAV_FORK_CARRY_ANGLE, blocking=blocking)
-
+    
     def get_position(self) -> float:
         return self.current_position_degrees
     
