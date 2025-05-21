@@ -3,7 +3,7 @@ import sys
 import time
 import threading
 import socket
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple
 import logging
 import asyncio
 import RPi.GPIO as GPIO
@@ -16,6 +16,7 @@ from .network.video_stream import VideoStreamer
 from .network.overhead_video_stream import OverheadStreamer
 from .network.tcp_server import CommandServer
 from .network.overhead_camera_client import WarehouseCameraClient
+from .localization.overhead_localizer import OverheadLocalizer
 from .utils.config import (
     HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, 
     OVERHEAD_VIDEO_WEBSOCKET_PORT,
@@ -63,7 +64,7 @@ class ForkliftServer:
         self.cleanup_complete = threading.Event()
         self.test_autonav_active = False # Flag for testing autonomous navigation
         self.autonav_stage = AUTONAV_STAGE_IDLE # Current stage of auto-navigation
-        self.robot_overhead_pose = None # To store (x_pixel, y_pixel, theta_pixel_frame)
+        self.robot_overhead_pose: Optional[Tuple[float, float, float]] = None # Ensure type hint matches OverheadLocalizer
         
         # Check port availability
         if not check_port_availability(SERVER_TCP_PORT):
@@ -83,6 +84,8 @@ class ForkliftServer:
             host=OVERHEAD_CAMERA_HOST, 
             port=OVERHEAD_CAMERA_PORT
         )
+        # Initialize Overhead Localizer
+        self.overhead_localizer = OverheadLocalizer()
         # Explicitly set to FORK_DOWN_POSITION (80) on startup
         self.servo_controller.set_position(FORK_DOWN_POSITION)  
         
@@ -276,13 +279,29 @@ class ForkliftServer:
 
             while self.running:
                 # Get overhead camera frame
-                overhead_frame = self.overhead_camera_client.get_video_frame()
-                if overhead_frame is not None:
+                raw_overhead_frame = self.overhead_camera_client.get_video_frame()
+                processed_overhead_frame = None # Frame to be sent to streamer
+
+                if raw_overhead_frame is not None:
                     self.overhead_frames_received_count += 1
-                    # logger.debug(f"Received overhead frame of shape: {overhead_frame.shape}. Forwarding to OverheadStreamer.") # This is already debug
-                    self.overhead_video_streamer.set_frame(overhead_frame)
-                    # Here, you would also pass overhead_frame to OverheadLocalizer to get self.robot_overhead_pose
-                # else: VideoStreamer will use its own Pi camera frame by default
+                    
+                    # Detect robot pose from the raw frame
+                    current_overhead_pose = self.overhead_localizer.detect_robot_pose(raw_overhead_frame)
+                    if current_overhead_pose is not None:
+                        self.robot_overhead_pose = current_overhead_pose
+                        # logger.info(f"Overhead Pose: x={self.robot_overhead_pose[0]:.0f}, y={self.robot_overhead_pose[1]:.0f}, theta={math.degrees(self.robot_overhead_pose[2]):.0f}")
+                        # For visual feedback, draw the pose on the frame that will be streamed
+                        processed_overhead_frame = self.overhead_localizer.draw_pose_on_frame(raw_overhead_frame.copy(), self.robot_overhead_pose)
+                    else:
+                        self.robot_overhead_pose = None # Explicitly set to None if not detected
+                        # logger.debug("Robot marker not detected in overhead view.") # This might be too frequent
+                        processed_overhead_frame = raw_overhead_frame # Send the raw frame if no pose
+
+                    # Send the (potentially annotated) frame to the overhead streamer
+                    if processed_overhead_frame is not None:
+                        self.overhead_video_streamer.set_frame(processed_overhead_frame)
+                    
+                # else: raw_overhead_frame was None, do nothing with it for streamer
 
                 # Log overhead camera FPS periodically
                 current_time_for_fps_log = time.time()
@@ -297,8 +316,11 @@ class ForkliftServer:
                     self.last_overhead_log_time = current_time_for_fps_log
 
                 if self.test_autonav_active:
-                    current_pose_onboard = self.video_streamer.shared_primary_target_pose # This is from onboard camera
-                    # TODO: Replace current_pose with self.robot_overhead_pose for navigation decisions
+                    # TODO: IMPORTANT - For actual overhead navigation, current_pose_onboard should be replaced/augmented
+                    # with self.robot_overhead_pose and appropriate target coordinates in pixel space.
+                    # The navigation_controller currently expects metric poses (tvec, rvec).
+                    # For now, autonav will continue using onboard camera data.
+                    current_pose_onboard = self.video_streamer.shared_primary_target_pose 
                     
                     if self.autonav_stage == AUTONAV_STAGE_NAVIGATING:
                         if current_pose_onboard:
