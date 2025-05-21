@@ -358,8 +358,8 @@ class ForkliftServer:
             logger.info("ForkliftServer._run_main_loop_async.finally: Main loop ended or exception. Ensuring motors stopped.")
             self.motor_controller.stop()
             if self.servo_controller:
-                logger.info("ForkliftServer._run_main_loop_async.finally: Stopping servo PWM.")
-                self.servo_controller.stop_pwm()
+                logger.info("ForkliftServer._run_main_loop_async.finally: Cleaning up servo controller.")
+                self.servo_controller.cleanup()
             
             # Disconnect overhead camera client
             if self.overhead_camera_client:
