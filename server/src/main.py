@@ -7,6 +7,7 @@ from typing import Dict, Any
 import logging
 import asyncio
 import RPi.GPIO as GPIO
+import math
 
 from .controllers.motor import MotorController
 from .controllers.servo import ServoController
@@ -277,14 +278,23 @@ class ForkliftServer:
                     if self.autonav_stage == AUTONAV_STAGE_NAVIGATING:
                         if current_pose:
                             tvec, rvec = current_pose
-                            self.navigation_controller.set_target(tvec, rvec) # Keep setting target
-                            nav_active = self.navigation_controller.navigate() # navigate() returns true if actively moving
+                            self.navigation_controller.set_target(tvec, rvec) 
+                            nav_active = self.navigation_controller.navigate()
 
-                            # is_at_target needs the raw tvec values from current_pose
-                            if self.navigation_controller.is_at_target(tvec[0][0], tvec[0][2]):
-                                logger.info("AutoNav: Target Reached! Stage: NAVIGATING -> LOWERING_FORKS")
-                                self.navigation_controller.clear_target() # Stop motors before servo action
-                                self.autonav_stage = AUTONAV_STAGE_LOWERING_FORKS
+                            # For stage transition, check if at target using the new inputs
+                            x_cam = tvec[0][0]
+                            z_cam = tvec[0][2]
+                            
+                            # Ensure z_cam is valid for calculations, similar to navigation.py
+                            if z_cam > 0:
+                                angle_to_marker_rad = math.atan2(x_cam, z_cam)
+                                current_planar_distance_m = math.sqrt(x_cam**2 + z_cam**2)
+                                if self.navigation_controller.is_at_target(angle_to_marker_rad, current_planar_distance_m):
+                                    logger.info("AutoNav: Target Reached! Stage: NAVIGATING -> LOWERING_FORKS")
+                                    self.navigation_controller.clear_target() 
+                                    self.autonav_stage = AUTONAV_STAGE_LOWERING_FORKS
+                            # else: Navigation.navigate() would have already logged and stopped motors if z_cam <=0
+
                         else:
                             # No primary target visible, clear navigation target if it was set
                             if self.navigation_controller.current_target_pose is not None:

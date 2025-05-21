@@ -59,23 +59,24 @@ LOG_LEVEL = "INFO"
 LOG_FILE = "server.log"
 
 # --- Navigation Controller Configuration ---
-NAV_TARGET_APPROACH_DISTANCE_M = 0.15  # Target distance from marker (15cm)
-NAV_DISTANCE_THRESHOLD_M = 0.03      # Tolerance for being "at distance" (3cm)
-NAV_X_THRESHOLD_M = 0.02             # Tolerance for being "centered" on X (2cm)
+NAV_TARGET_APPROACH_DISTANCE_M = 0.15  # Target distance to stop from marker (in meters)
+NAV_DISTANCE_THRESHOLD_M = 0.02       # Allowed error in distance (meters)
+NAV_X_THRESHOLD_M = 0.02              # Allowed error in x-offset (meters) - Will be replaced by angular for centering
+NAV_X_THRESHOLD_RAD = 0.05            # Allowed angular error for centering (radians, e.g., 0.05 rad ~= 2.8 deg)
 
 # PID Gains for Turning (correcting X-offset from tvec)
-NAV_TURNING_PID_KP = 250.0 # Proportional gain (higher means stronger reaction to X-offset)
-NAV_TURNING_PID_KI = 5.0   # Integral gain (accumulates error over time)
-NAV_TURNING_PID_KD = 10.0  # Derivative gain (dampens overshoot)
+NAV_TURNING_PID_KP = 2.0  # Proportional gain for turning PID
+NAV_TURNING_PID_KI = 0.05  # Integral gain for turning PID
+NAV_TURNING_PID_KD = 0.5   # Derivative gain for turning PID
 
 # PID Gains for Distance (correcting Z-offset from tvec)
-NAV_DISTANCE_PID_KP = 150.0 # Proportional gain (higher means faster approach)
-NAV_DISTANCE_PID_KI = 2.0   # Integral gain
-NAV_DISTANCE_PID_KD = 5.0  # Derivative gain
+NAV_DISTANCE_PID_KP = 1.5  # Proportional gain for distance PID
+NAV_DISTANCE_PID_KI = 0.03 # Integral gain for distance PID
+NAV_DISTANCE_PID_KD = 0.3  # Derivative gain for distance PID
 
-NAV_MAX_TURNING_SPEED = 5        # Max speed for AUTONOMOUS turning actions (0-100 for motor controller)
+NAV_MAX_TURNING_SPEED = 30       # Maximum speed for turning (PWM duty cycle)
 MANUAL_TURN_SPEED = 1            # Fixed speed for MANUAL turning actions (0-100 for motor controller)
-NAV_MAX_FORWARD_SPEED = 50       # Max speed for forward/backward actions (0-100)
+NAV_MAX_FORWARD_SPEED = 35       # Maximum speed for forward/backward movement (PWM duty cycle)
 NAV_MIN_EFFECTIVE_SPEED = 5      # Minimum speed to ensure motors engage if PID output is too low but error exists
 
 # --- Servo Control Configuration ---

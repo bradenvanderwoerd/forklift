@@ -63,16 +63,15 @@ class NavigationController:
         self.motor_controller = motor_controller
         
         # Initialize PID controllers
-        # For turning, the setpoint is 0 (we want the marker's x-coordinate to be 0)
+        # For turning, the setpoint is 0 (we want the marker's angle to be 0)
         self.turning_pid = PIDController(
             kp=config.NAV_TURNING_PID_KP,
             ki=config.NAV_TURNING_PID_KI,
             kd=config.NAV_TURNING_PID_KD,
-            setpoint=0
+            setpoint=0 # Setpoint is 0 radians
         )
         
         # For distance, the setpoint is the target approach distance
-        # The PID will compute an output to make current_distance approach setpoint
         self.distance_pid = PIDController(
             kp=config.NAV_DISTANCE_PID_KP,
             ki=config.NAV_DISTANCE_PID_KI,
@@ -80,25 +79,25 @@ class NavigationController:
             setpoint=config.NAV_TARGET_APPROACH_DISTANCE_M
         )
         
-        # Store initial config values for reference or potential revert
         self._initial_turning_pid_gains = (config.NAV_TURNING_PID_KP, config.NAV_TURNING_PID_KI, config.NAV_TURNING_PID_KD)
         self._initial_distance_pid_gains = (config.NAV_DISTANCE_PID_KP, config.NAV_DISTANCE_PID_KI, config.NAV_DISTANCE_PID_KD)
 
         self.target_approach_distance_m = config.NAV_TARGET_APPROACH_DISTANCE_M
         self.distance_threshold_m = config.NAV_DISTANCE_THRESHOLD_M
-        self.x_threshold_m = config.NAV_X_THRESHOLD_M
+        # self.x_threshold_m = config.NAV_X_THRESHOLD_M # Replaced by angular threshold
+        self.angular_threshold_rad = config.NAV_X_THRESHOLD_RAD
 
         self.max_turning_speed = config.NAV_MAX_TURNING_SPEED
         self.max_forward_speed = config.NAV_MAX_FORWARD_SPEED
         self.min_effective_speed = config.NAV_MIN_EFFECTIVE_SPEED
 
-        self.current_target_pose = None # To store tvec, rvec of the current target
+        self.current_target_pose = None
 
     def set_target(self, tvec, rvec):
-        """Set the current navigation target pose and reset PIDs."""
         self.current_target_pose = (tvec, rvec)
         self.turning_pid.reset()
         self.distance_pid.reset()
+        # Log the raw tvec, calculations will happen in navigate()
         logger.info(f"NavigationController: New target set. tvec: {tvec.flatten().round(3)}")
 
     def clear_target(self):
@@ -107,125 +106,89 @@ class NavigationController:
         logger.info("NavigationController: Target cleared, stopping motors.")
 
     def navigate(self) -> bool:
-        """ 
-        Computes and applies motor commands to navigate towards the current_target_pose.
-        Returns True if navigation logic is actively trying to move, False if no target or at target.
-        """
         if self.current_target_pose is None:
-            # self.motor_controller.stop() # Ensure motors are stopped if no target
             return False
 
         tvec, rvec = self.current_target_pose
         
-        # Target x-coordinate in camera frame (error for turning PID)
-        # tvec from estimatePoseSingleMarkers (for a single marker in the tvecs array) is shape (N, 1,3).
-        # So tvecs[i] is shape (1,3), i.e., [[x, y, z]]
-        # tvec[0] is [x,y,z]
-        # tvec[0][0] is x, tvec[0][2] is z
-        target_x_cam = tvec[0][0]
-        # Current distance to marker (along Z-axis in camera frame)
-        current_distance_cam = tvec[0][2]
+        x_cam = tvec[0][0]
+        z_cam = tvec[0][2]
 
-        # Check if we are at the target position
-        if self.is_at_target(target_x_cam, current_distance_cam):
-            logger.info("NavigationController: At target position.")
-            self.motor_controller.stop()
-            return False # Reached target
-
-        # --- PID Computations ---
-        # Turning PID: input is current x-offset, setpoint is 0
-        # Output is a turning speed adjustment
-        turning_effort = self.turning_pid.compute(current_value=target_x_cam)
-        
-        # Distance PID: input is current distance, setpoint is NAV_TARGET_APPROACH_DISTANCE_M
-        # Output is a forward speed adjustment. A positive output means we need to move forward.
-        # A negative output means we need to move backward (overshot or starting too close).
-        # To make PID output positive for "move forward", we can use (setpoint - current_value)
-        # or invert the PID output if compute is (current_value - setpoint)
-        # My PID compute is (setpoint - current_value), so positive output means current_value < setpoint (need to increase current_value, i.e., move away if setpoint is distance)
-        # Let's adjust: setpoint for distance PID is target_approach_distance. Input is current_distance.
-        # Error = target_approach_distance - current_distance.
-        # Positive error means too far, need to move forward. Negative error = too close, move backward.
-        # The PID output will try to correct this error.
-        # For our PID: output = Kp*error + ...
-        # So, if current_distance < NAV_TARGET_APPROACH_DISTANCE_M (too close), error is positive, output is positive.
-        # This means the PID output should drive the robot BACKWARDS if positive.
-        # Let's re-evaluate: PID setpoint is the value we want to reach.
-        # distance_pid.setpoint = config.NAV_TARGET_APPROACH_DISTANCE_M
-        # distance_pid.compute(current_value = current_distance_cam)
-        # if current_distance_cam > setpoint (too far), error = setpoint - current = negative. Output negative -> drive forward.
-        # if current_distance_cam < setpoint (too close), error = setpoint - current = positive. Output positive -> drive backward.
-        # So, a negative PID output for distance means move forward.
-        distance_effort = self.distance_pid.compute(current_value=current_distance_cam)
-
-        # --- Convert PID efforts to motor commands ---
-        # Clamp PID outputs to a manageable range before scaling to motor speeds
-        clamped_turning_effort = max(-1.0, min(1.0, turning_effort / 100.0)) # Restore clamping
-        clamped_distance_effort = max(-1.0, min(1.0, distance_effort / 100.0)) # Normalize somewhat
-
-        # Determine motor speeds
-        turn_speed = clamped_turning_effort * self.max_turning_speed # Restored original line
-        
-        forward_speed = -clamped_distance_effort * self.max_forward_speed # Negative because negative effort means move forward
-        
-        # Apply a minimum effective speed if the computed speed is too low but there's error
-        if 0 < abs(forward_speed) < self.min_effective_speed and not self.is_at_distance(current_distance_cam):
-            forward_speed = self.min_effective_speed * (1 if forward_speed > 0 else -1)
-        # Restore min_effective_speed for turning
-        if 0 < abs(turn_speed) < self.min_effective_speed and not self.is_centered(target_x_cam):
-             turn_speed = self.min_effective_speed * (1 if turn_speed > 0 else -1)
-
-        # Simple control logic: Prioritize turning if not centered, then drive.
-        # This can be made more sophisticated (e.g., combined turning and driving).
-        if not self.is_centered(target_x_cam):
-            logger.debug(f"Nav: Turning. X_err: {target_x_cam:.3f}, TurnEffort: {turning_effort:.2f}, TurnSpeed: {turn_speed:.2f}")
-            self.motor_controller.stop() # Stop forward movement while turning sharply
-            if turn_speed > 0: # Positive turn_speed (marker to left, PID error positive), but turn_left() in MC goes right
-                self.motor_controller.turn_right(abs(turn_speed)) # Call turn_right to achieve physical left turn
-            else: # Negative turn_speed (marker to right, PID error negative), but turn_right() in MC goes left
-                self.motor_controller.turn_left(abs(turn_speed))  # Call turn_left to achieve physical right turn
-        elif not self.is_at_distance(current_distance_cam):
-            logger.debug(f"Nav: Driving. Z_err: {(current_distance_cam - self.target_approach_distance_m):.3f}, DistEffort: {distance_effort:.2f}, FwdSpeed: {forward_speed:.2f}")
-            if forward_speed > 0: # Positive forward_speed means move forward
-                self.motor_controller.drive_forward(abs(forward_speed))
-            else: # Negative forward_speed means move backward
-                self.motor_controller.drive_backward(abs(forward_speed))
-        else:
-            # Should have been caught by is_at_target, but as a fallback:
-            logger.debug("Nav: Minor adjustments or at target, stopping.")
+        # Avoid math domain error if z_cam is zero or negative (marker directly at or behind camera)
+        if z_cam <= 0:
+            logger.warning(f"Navigate: Marker z_cam is {z_cam:.3f}, too close or behind. Stopping.")
             self.motor_controller.stop()
             return False
             
-        return True # Actively navigating
+        angle_to_marker_rad = math.atan2(x_cam, z_cam)
+        current_planar_distance_m = math.sqrt(x_cam**2 + z_cam**2) # True planar distance
 
-    def is_centered(self, target_x_cam: float) -> bool:
-        return abs(target_x_cam) < self.x_threshold_m
+        if self.is_at_target(angle_to_marker_rad, current_planar_distance_m):
+            logger.info("NavigationController: At target position.")
+            self.motor_controller.stop()
+            return False
 
-    def is_at_distance(self, current_distance_cam: float) -> bool:
-        return abs(current_distance_cam - self.target_approach_distance_m) < self.distance_threshold_m
+        turning_effort = self.turning_pid.compute(current_value=angle_to_marker_rad)
+        distance_effort = self.distance_pid.compute(current_value=current_planar_distance_m)
 
-    def is_at_target(self, target_x_cam: float, current_distance_cam: float) -> bool:
-        """Check if the robot is at the target position (centered and at approach distance)."""
-        centered = self.is_centered(target_x_cam)
-        at_distance = self.is_at_distance(current_distance_cam)
-        # Could add orientation check here using rvec if needed
-        # For now, just position based on tvec
+        # Clamp PID outputs - these factors might need tuning based on typical effort values
+        # For angle, effort might be small (e.g., +/- PI/2 radians), for distance, effort could be larger.
+        # Consider the typical range of 'error' for each PID.
+        # Angle error range: e.g. -pi to +pi. Distance error: e.g. -1m to +1m.
+        # The division factor helps normalize this before applying max_speed.
+        clamped_turning_effort = max(-1.0, min(1.0, turning_effort / (math.pi/2) )) # Normalize by ~max expected angle error
+        clamped_distance_effort = max(-1.0, min(1.0, distance_effort / 1.0)) # Normalize by ~1m max expected distance error
+
+        turn_speed = clamped_turning_effort * self.max_turning_speed
+        forward_speed = -clamped_distance_effort * self.max_forward_speed
+
+        if 0 < abs(forward_speed) < self.min_effective_speed and not self.is_at_distance(current_planar_distance_m):
+            forward_speed = self.min_effective_speed * (1 if forward_speed > 0 else -1)
+        if 0 < abs(turn_speed) < self.min_effective_speed and not self.is_centered(angle_to_marker_rad):
+             turn_speed = self.min_effective_speed * (1 if turn_speed > 0 else -1)
+
+        if not self.is_centered(angle_to_marker_rad):
+            logger.debug(f"Nav: Turning. Angle_err: {angle_to_marker_rad:.3f} rad, TurnEffortRaw: {turning_effort:.2f}, TurnSpeed: {turn_speed:.2f}")
+            self.motor_controller.stop()
+            if turn_speed > 0: 
+                self.motor_controller.turn_right(abs(turn_speed))
+            else: 
+                self.motor_controller.turn_left(abs(turn_speed))
+        elif not self.is_at_distance(current_planar_distance_m):
+            logger.debug(f"Nav: Driving. Dist_err: {(current_planar_distance_m - self.target_approach_distance_m):.3f} m, DistEffortRaw: {distance_effort:.2f}, FwdSpeed: {forward_speed:.2f}")
+            if forward_speed > 0:
+                self.motor_controller.drive_forward(abs(forward_speed))
+            else:
+                self.motor_controller.drive_backward(abs(forward_speed))
+        else:
+            logger.debug("Nav: Minor adjustments or at target (in navigate), stopping.")
+            self.motor_controller.stop()
+            return False
+            
+        return True
+
+    def is_centered(self, angle_to_marker_rad: float) -> bool:
+        return abs(angle_to_marker_rad) < self.angular_threshold_rad
+
+    def is_at_distance(self, current_planar_distance_m: float) -> bool:
+        return abs(current_planar_distance_m - self.target_approach_distance_m) < self.distance_threshold_m
+
+    def is_at_target(self, angle_to_marker_rad: float, current_planar_distance_m: float) -> bool:
+        centered = self.is_centered(angle_to_marker_rad)
+        at_distance = self.is_at_distance(current_planar_distance_m)
         if centered and at_distance:
             logger.debug("Navigation: Reached target (centered and at distance).")
             return True
         return False
 
     def stop_navigation(self):
-        """Stops any active navigation and resets the motor controller."""
         self.clear_target()
         logger.info("NavigationController: Navigation explicitly stopped.")
 
     def update_turning_pid_gains(self, kp: float, ki: float, kd: float):
-        """Updates the gains for the turning PID controller."""
         self.turning_pid.set_gains(kp, ki, kd)
         logger.info(f"NavigationController: Turning PID gains updated to Kp={kp}, Ki={ki}, Kd={kd}")
 
     def update_distance_pid_gains(self, kp: float, ki: float, kd: float):
-        """Updates the gains for the distance PID controller."""
         self.distance_pid.set_gains(kp, ki, kd)
         logger.info(f"NavigationController: Distance PID gains updated to Kp={kp}, Ki={ki}, Kd={kd}") 
