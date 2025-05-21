@@ -261,7 +261,7 @@ class MainWindow(QMainWindow):
         self.current_speed = value
         if self.is_connected and not self.is_autonav_active:
             # Send a specific command for speed slider changes
-            self.robot_client.send_command("SET_SPEED", {"value": self.current_speed})
+            self.robot_client.send_command("SET_SPEED", self.current_speed) 
             logger.debug(f"CLIENT: Speed slider changed to {self.current_speed}. Sent SET_SPEED command.")
         self.setFocus() # Ensure main window regains focus after slider interaction
 
