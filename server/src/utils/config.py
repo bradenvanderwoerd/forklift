@@ -77,7 +77,7 @@ NAV_DISTANCE_PID_KD = 0.3  # Derivative gain for distance PID
 NAV_MAX_TURNING_SPEED = 10       # Maximum speed for turning (PWM duty cycle)
 MANUAL_TURN_SPEED = 1            # Fixed speed for MANUAL turning actions (0-100 for motor controller)
 NAV_MAX_FORWARD_SPEED = 35       # Maximum speed for forward/backward movement (PWM duty cycle)
-NAV_MIN_EFFECTIVE_SPEED = 5      # Minimum speed to ensure motors engage if PID output is too low but error exists
+NAV_MIN_EFFECTIVE_SPEED = 1      # Minimum speed to ensure motors engage if PID output is too low but error exists - SET LOW FOR TUNING
 
 # --- Servo Control Configuration ---
 SERVO_STEP_DEGREES = 1          # Degrees to move the servo per step for smooth movement
