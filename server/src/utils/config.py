@@ -76,10 +76,10 @@ NAV_DISTANCE_PID_KP = 1.5  # Proportional gain for distance PID
 NAV_DISTANCE_PID_KI = 0.03 # Integral gain for distance PID
 NAV_DISTANCE_PID_KD = 0.3  # Derivative gain for distance PID
 
-NAV_MAX_TURNING_SPEED = 10       # Maximum speed for turning (PWM duty cycle)
-MANUAL_TURN_SPEED = 1            # Fixed speed for MANUAL turning actions (0-100 for motor controller)
-NAV_MAX_FORWARD_SPEED = 35       # Maximum speed for forward/backward movement (PWM duty cycle)
-NAV_MIN_EFFECTIVE_SPEED = 1      # Minimum speed to ensure motors engage if PID output is too low but error exists - SET LOW FOR TUNING
+NAV_MAX_TURNING_SPEED = 100       # Maximum speed for turning (PWM duty cycle), effectively 75-100
+MANUAL_TURN_SPEED = 75            # Fixed speed for MANUAL turning actions (0-100 for motor controller), now effectively 75-100
+NAV_MAX_FORWARD_SPEED = 100       # Maximum speed for forward/backward movement (PWM duty cycle), effectively 75-100
+NAV_MIN_EFFECTIVE_SPEED = 75      # Minimum speed to ensure motors engage, effectively sets the lower bound of 75-100 range
 
 # --- Servo Control Configuration ---
 SERVO_STEP_DEGREES = 1          # Degrees to move the servo per step for smooth movement
@@ -88,7 +88,7 @@ SERVO_STEP_DELAY_SECONDS = 0.015 # Delay between each step (controls speed)
 # --- New Overhead Camera Configuration ---
 OVERHEAD_CAMERA_HOST = "192.168.0.100" # TODO: Update with actual Arena Server IP
 OVERHEAD_CAMERA_PORT = 4001
-ROBOT_OVERHEAD_ARUCO_ID = 36 # ArUco ID of the marker on top of the robot (Changed from 50 to 36)
+ROBOT_OVERHEAD_ARUCO_ID = 36 # ArUco ID of the marker on top of the robot
 OVERHEAD_VIDEO_WEBSOCKET_PORT = 3458 # New port for streaming overhead video via WebSocket
 # ARUCO_DICTIONARY_OVERHEAD = cv2.aruco.DICT_6X6_50 # Defined globally if same as ARUCO_DICTIONARY
 # If you use a different dictionary for overhead, define it here and import cv2 if not already.

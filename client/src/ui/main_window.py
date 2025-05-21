@@ -105,7 +105,7 @@ class MainWindow(QMainWindow):
         self.speed_slider.setValue(50)
         self.speed_slider.setMinimumHeight(200) # Increased minimum height for the slider
         self.speed_slider.valueChanged.connect(self.on_speed_change)
-        speed_label = QLabel("Speed")
+        speed_label = QLabel("Speed (75-100)")
         speed_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         speed_layout.addWidget(speed_label)
         speed_layout.addWidget(self.speed_slider, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -190,7 +190,7 @@ class MainWindow(QMainWindow):
         self.timer.start(33)  # ~30 FPS
         
         self.is_connected = False
-        self.current_speed = 50
+        self.on_speed_change(self.speed_slider.value()) # Initialize current_speed correctly
         self.is_autonav_active = False
         
     def keyPressEvent(self, event: QKeyEvent):
@@ -257,15 +257,18 @@ class MainWindow(QMainWindow):
         else: self.autonav_button.setText("Start Auto-Nav"); self.autonav_button.setStyleSheet("")
         logger.info(f"CLIENT: Auto-Nav toggled to: {self.is_autonav_active}")
 
-    def on_speed_change(self, value):
-        self.current_speed = value
+    def on_speed_change(self, slider_value):
+        # Map slider_value (0-100) to actual speed (75-100)
+        min_actual_speed = 75
+        max_actual_speed = 100
+        actual_speed_range = max_actual_speed - min_actual_speed
+        
+        self.current_speed = int(min_actual_speed + (slider_value / 100.0) * actual_speed_range)
+        
         # We will now rely on the keyPressEvent to send the updated speed
         # with the drive commands. This avoids sending SET_SPEED proactively,
         # which might be causing the robot to move unintentionally on the server.
-        # if self.is_connected and not self.is_autonav_active:
-        #     self.robot_client.send_command("SET_SPEED", self.current_speed) 
-        #     logger.debug(f"CLIENT: Speed slider changed to {self.current_speed}. Sent SET_SPEED command.")
-        logger.debug(f"CLIENT: Speed slider changed to {self.current_speed}. Speed will be applied on next drive command.")
+        logger.debug(f"CLIENT: Slider value {slider_value} -> Mapped speed {self.current_speed}. Speed will be applied on next drive command.")
         self.setFocus() # Ensure main window regains focus after slider interaction
 
     def _update_single_video_feed(self, frame: Optional[np.ndarray], label: QLabel, feed_name: str):
