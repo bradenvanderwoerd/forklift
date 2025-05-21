@@ -139,13 +139,13 @@ class RobotClient:
             self.onboard_video_ws = await websockets.connect(f"ws://{self.host}:{self.onboard_video_port}", ping_interval=20, ping_timeout=20, max_size=None)
             self.onboard_video_connected = True
             logger.info("Connected to onboard video server.")
-            self.onboard_video_receive_task = asyncio.create_task(self._receive_video_stream(self.onboard_video_ws, self.onboard_video_queue, "Onboard"))
+            self.onboard_video_receive_task = asyncio.create_task(self._receive_video_stream(self.onboard_video_ws, self.onboard_video_queue, "Onboard"), name="OnboardVideoReceiveTask")
 
             logger.info(f"Connecting to overhead video server at ws://{self.host}:{self.overhead_video_port}")
             self.overhead_video_ws = await websockets.connect(f"ws://{self.host}:{self.overhead_video_port}", ping_interval=20, ping_timeout=20, max_size=None)
             self.overhead_video_connected = True
             logger.info("Connected to overhead video server.")
-            self.overhead_video_receive_task = asyncio.create_task(self._receive_video_stream(self.overhead_video_ws, self.overhead_video_queue, "Overhead"))
+            self.overhead_video_receive_task = asyncio.create_task(self._receive_video_stream(self.overhead_video_ws, self.overhead_video_queue, "Overhead"), name="OverheadVideoReceiveTask")
             
             self.is_connected = self.command_connected and self.onboard_video_connected and self.overhead_video_connected
             if self.is_connected:
@@ -166,10 +166,11 @@ class RobotClient:
             tasks_to_cancel.append(self.overhead_video_receive_task)
 
         for task in tasks_to_cancel:
+            task_name = task.get_name() if hasattr(task, 'get_name') else 'UnknownTask'
             task.cancel()
             try: await task
-            except asyncio.CancelledError: logger.info(f"Video task {task.get_name()} cancelled.")
-            except Exception as e: logger.error(f"Error cancelling task {task.get_name()}: {e}")
+            except asyncio.CancelledError: logger.info(f"Video task {task_name} cancelled.")
+            except Exception as e: logger.error(f"Error cancelling task {task_name}: {e}")
         
         self.onboard_video_receive_task = None
         self.overhead_video_receive_task = None
@@ -179,7 +180,7 @@ class RobotClient:
         if self.onboard_video_ws: ws_connections.append(self.onboard_video_ws)
         if self.overhead_video_ws: ws_connections.append(self.overhead_video_ws)
 
-        close_tasks = [asyncio.wait_for(ws.close(), timeout=2.0) for ws in ws_connections if ws.open]
+        close_tasks = [asyncio.wait_for(ws.close(), timeout=2.0) for ws in ws_connections if ws and not ws.closed]
         if close_tasks:
             results = await asyncio.gather(*close_tasks, return_exceptions=True)
             for i, result in enumerate(results):
@@ -201,7 +202,7 @@ class RobotClient:
         try:
             while not (self._stop_event and self._stop_event.is_set()):
                 try:
-                    if not ws or not ws.open:
+                    if not ws or ws.closed:
                         logger.warning(f"{stream_name} websocket is None or closed, stopping video reception.")
                         break
                     data = await asyncio.wait_for(ws.recv(), timeout=1.0)
@@ -226,6 +227,8 @@ class RobotClient:
             logger.info(f"{stream_name} video receiver task finished.")
             if stream_name == "Onboard": self.onboard_video_connected = False
             elif stream_name == "Overhead": self.overhead_video_connected = False
+            if not self.onboard_video_connected and not self.overhead_video_connected and not self.command_connected:
+                self.is_connected = False
                 
     def _run_client(self):
         try:
@@ -251,6 +254,9 @@ class RobotClient:
                 self.loop.close()
                 logger.info("Client asyncio event loop closed.")
             self.is_connected = False
+            self.command_connected = False
+            self.onboard_video_connected = False
+            self.overhead_video_connected = False
             logger.info("Client thread _run_client finished.")
 
     async def _run_main_async(self):
@@ -273,12 +279,23 @@ class RobotClient:
                 try:
                     await asyncio.wait_for(self._stop_event.wait(), timeout=1.0) 
                 except asyncio.TimeoutError:
-                    if (self.command_ws and not self.command_ws.open) or \
-                       (self.onboard_video_ws and not self.onboard_video_ws.open) or \
-                       (self.overhead_video_ws and not self.overhead_video_ws.open):
-                        logger.warning("One or more WebSockets found closed. Triggering reconnect.")
+                    any_ws_closed = False
+                    if self.command_ws and self.command_ws.closed:
+                        logger.warning("Command WebSocket found closed.")
+                        self.command_connected = False
+                        any_ws_closed = True
+                    if self.onboard_video_ws and self.onboard_video_ws.closed:
+                        logger.warning("Onboard Video WebSocket found closed.")
+                        self.onboard_video_connected = False
+                        any_ws_closed = True
+                    if self.overhead_video_ws and self.overhead_video_ws.closed:
+                        logger.warning("Overhead Video WebSocket found closed.")
+                        self.overhead_video_connected = False
+                        any_ws_closed = True
+                    
+                    if any_ws_closed:
+                        logger.warning("One or more WebSockets found closed. Triggering full reconnect logic.")
                         self.is_connected = False
-                        await self._shutdown_client_resources()
                     continue
             
             if self._stop_event.is_set():
