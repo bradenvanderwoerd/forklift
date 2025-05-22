@@ -10,6 +10,7 @@ import RPi.GPIO as GPIO
 import math
 import json # Added for JSON operations
 import cv2 # Import OpenCV for drawing
+import numpy as np
 
 from .controllers.motor import MotorController
 from .controllers.servo import ServoController
@@ -290,46 +291,15 @@ class ForkliftServer:
             self.running = False
     
     def _run_overhead_video_server(self):
-        logger.info("Overhead video server thread started.")
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        logger.info("Overhead video server thread starting...")
         try:
-            loop.run_until_complete(self.overhead_video_streamer.start_server())
-            logger.info(f"Overhead video WebSocket server started on {self.overhead_video_streamer.host}:{self.overhead_video_streamer.port}")
-            while self.running:
-                frame = self.overhead_camera_client.get_latest_frame() # This is a blocking call with timeout
-                if frame is not None:
-                    # Detect robot pose in the frame
-                    current_time = time.monotonic()
-                    self.robot_overhead_pose, annotated_frame = self.overhead_localizer.detect_robot_pose(frame, current_time)
-                    
-                    # Draw target pose indicator if a pickup target exists
-                    pickup_target = self.overhead_target_poses.get("pickup")
-                    if pickup_target and annotated_frame is not None:
-                        # pickup_target is (x, y, theta)
-                        # We only need x, y for the circle center
-                        center_x = int(pickup_target[0])
-                        center_y = int(pickup_target[1])
-                        # Draw a yellow circle for the pickup target
-                        cv2.circle(annotated_frame, (center_x, center_y), 10, (0, 255, 255), 2) # Yellow circle, radius 10, thickness 2
-
-                    # Send the (potentially) annotated frame to clients
-                    if annotated_frame is not None:
-                        self.overhead_video_streamer.add_frame_to_queue(annotated_frame)
-                    else:
-                        # If detection failed or no frame to annotate, send the original frame
-                        self.overhead_video_streamer.add_frame_to_queue(frame)
-                else:
-                    # logger.debug("No new frame from overhead camera client.") # Can be noisy
-                    time.sleep(0.01) # Small delay if no frame to prevent busy-waiting
+            # The OverheadStreamer's start() method handles its own asyncio loop and server setup.
+            self.overhead_video_streamer.start()
         except Exception as e:
-            logger.error(f"Exception in overhead video server: {e}", exc_info=True)
+            logger.error(f"Exception in _run_overhead_video_server: {e}", exc_info=True)
+            self.running = False # Signal main loop to stop if this thread fails critically
         finally:
-            if hasattr(self.overhead_video_streamer, 'server') and self.overhead_video_streamer.server:
-                self.overhead_video_streamer.server.close()
-                loop.run_until_complete(self.overhead_video_streamer.server.wait_closed())
-            loop.close()
-            logger.info("Overhead video server thread stopped.")
+            logger.info("Overhead video server thread finished.")
     
     def _run_command_server(self):
         """Run command server in a separate thread"""
@@ -368,23 +338,36 @@ class ForkliftServer:
                 # Get overhead camera frame
                 raw_overhead_frame = self.overhead_camera_client.get_video_frame()
                 processed_overhead_frame = None # Frame to be sent to streamer
+                current_time = time.monotonic() # Get current time for pose detection
 
                 if raw_overhead_frame is not None:
                     self.overhead_frames_received_count += 1
                     
                     # Detect robot pose from the raw frame
-                    current_overhead_pose = self.overhead_localizer.detect_robot_pose(raw_overhead_frame)
-                    if current_overhead_pose is not None:
-                        self.robot_overhead_pose = current_overhead_pose
-                        # logger.info(f"Overhead Pose: x={self.robot_overhead_pose[0]:.0f}, y={self.robot_overhead_pose[1]:.0f}, theta={math.degrees(self.robot_overhead_pose[2]):.0f}")
-                        # For visual feedback, draw the pose on the frame that will be streamed
-                        processed_overhead_frame = self.overhead_localizer.draw_pose_on_frame(raw_overhead_frame.copy(), self.robot_overhead_pose)
+                    # This returns: Optional[Tuple[float, float, float]], Optional[np.ndarray]
+                    detected_pose, annotated_frame_from_localizer = self.overhead_localizer.detect_robot_pose(raw_overhead_frame, current_time)
+                    
+                    if detected_pose is not None:
+                        self.robot_overhead_pose = detected_pose
+                        # Use the annotated_frame_from_localizer as the base for further drawing
+                        processed_overhead_frame = annotated_frame_from_localizer if annotated_frame_from_localizer is not None else raw_overhead_frame.copy()
                     else:
                         self.robot_overhead_pose = None # Explicitly set to None if not detected
-                        # logger.debug("Robot marker not detected in overhead view.") # This might be too frequent
-                        processed_overhead_frame = raw_overhead_frame # Send the raw frame if no pose
+                        processed_overhead_frame = raw_overhead_frame # Send the raw frame if no pose detection or annotation
 
-                    # Send the (potentially annotated) frame to the overhead streamer
+                    # Draw target pose indicator if a pickup target exists
+                    # Ensure processed_overhead_frame is not None before drawing
+                    if processed_overhead_frame is not None:
+                        pickup_target = self.overhead_target_poses.get("pickup")
+                        if pickup_target:
+                            # pickup_target is (x, y, theta)
+                            # We only need x, y for the circle center
+                            center_x = int(pickup_target[0])
+                            center_y = int(pickup_target[1])
+                            # Draw a yellow circle for the pickup target
+                            cv2.circle(processed_overhead_frame, (center_x, center_y), 10, (0, 255, 255), 2) # Yellow circle, radius 10, thickness 2
+
+                    # Send the (potentially) annotated frame to the overhead streamer
                     if processed_overhead_frame is not None:
                         self.overhead_video_streamer.set_frame(processed_overhead_frame)
                     
