@@ -11,6 +11,7 @@ import math
 import json # Added for JSON operations
 import cv2 # Import OpenCV for drawing
 import numpy as np
+import os
 
 from .controllers.motor import MotorController
 from .controllers.servo import ServoController
@@ -71,12 +72,43 @@ class ForkliftServer:
         self.test_autonav_active = False # Flag for testing autonomous navigation
         self.autonav_stage = AUTONAV_STAGE_IDLE # Current stage of auto-navigation
         self.robot_overhead_pose: Optional[Tuple[float, float, float]] = None
-        # Initialize with default structure, will be populated by _load_overhead_target_poses
         self.overhead_target_poses: Dict[str, Optional[Tuple[float, float, float]]] = {
             "pickup": None,
             "dropoff": None
         }
         self._load_overhead_target_poses() # Load poses at startup
+
+        # Load overhead camera calibration data
+        self.overhead_cam_mtx: Optional[np.ndarray] = None
+        self.overhead_cam_dist: Optional[np.ndarray] = None
+        self.new_overhead_cam_mtx: Optional[np.ndarray] = None # For undistortion
+        self.overhead_calibration_roi: Optional[Tuple[int, int, int, int]] = None # Region of interest
+        try:
+            # Construct the absolute path to the calibration file
+            script_dir = os.path.dirname(__file__) # server/src/
+            # Assuming overhead_camera_calibration.npz is in server/src/
+            calibration_file_path = os.path.join(script_dir, "overhead_camera_calibration.npz")
+            
+            if not os.path.exists(calibration_file_path):
+                logger.warning(f"Overhead camera calibration file NOT FOUND at {calibration_file_path}. Frames will not be undistorted.")
+            else:
+                with np.load(calibration_file_path) as data:
+                    self.overhead_cam_mtx = data['mtx']
+                    self.overhead_cam_dist = data['dist']
+                    logger.info(f"Successfully loaded overhead camera calibration data from {calibration_file_path}.")
+                    # You might want to refine the new camera matrix later if needed for cropping
+                    # For now, new_overhead_cam_mtx can be the same as overhead_cam_mtx or calculated for optimal view
+                    # h, w = image_shape_from_somewhere # Need image shape for getOptimalNewCameraMatrix
+                    # self.new_overhead_cam_mtx, self.overhead_calibration_roi = cv2.getOptimalNewCameraMatrix(
+                    #    self.overhead_cam_mtx, self.overhead_cam_dist, (w,h), 1, (w,h)
+                    # )
+                    # Using the original matrix for now, will result in an image cropped to valid pixels
+                    self.new_overhead_cam_mtx = self.overhead_cam_mtx 
+        except Exception as e:
+            logger.error(f"Error loading overhead camera calibration data: {e}. Frames will not be undistorted.", exc_info=True)
+            self.overhead_cam_mtx = None # Ensure it's None on error
+            self.overhead_cam_dist = None
+            self.new_overhead_cam_mtx = None
         
         # Check port availability
         if not check_port_availability(SERVER_TCP_PORT):
@@ -335,60 +367,62 @@ class ForkliftServer:
             logger.info("ForkliftServer main loop started. Use TOGGLE_AUTONAV command to test navigation.")
 
             while self.running:
-                # Get overhead camera frame
                 raw_overhead_frame = self.overhead_camera_client.get_video_frame()
-                processed_overhead_frame = None # Frame to be sent to streamer
+                
+                # --- Frame Undistortion --- 
+                if raw_overhead_frame is not None and self.overhead_cam_mtx is not None and self.overhead_cam_dist is not None and self.new_overhead_cam_mtx is not None:
+                    # Undistort the frame
+                    # Using new_overhead_cam_mtx (which is same as original mtx for now) for undistortion crop
+                    undistorted_frame = cv2.undistort(raw_overhead_frame, self.overhead_cam_mtx, self.overhead_cam_dist, None, self.new_overhead_cam_mtx)
+                    # Optional: crop the image using ROI if getOptimalNewCameraMatrix was used and ROI is valid
+                    # if self.overhead_calibration_roi:
+                    #     x, y, w, h = self.overhead_calibration_roi
+                    #     undistorted_frame = undistorted_frame[y:y+h, x:x+w]
+                    current_frame_to_process = undistorted_frame
+                    # logger.debug("Overhead frame undistorted.")
+                elif raw_overhead_frame is not None:
+                    # No calibration data, use raw frame
+                    current_frame_to_process = raw_overhead_frame
+                    # logger.debug("Using raw overhead frame (no undistortion).")
+                else:
+                    # No frame received
+                    current_frame_to_process = None
+                # --- End Frame Undistortion ---
 
-                if raw_overhead_frame is not None:
+                processed_overhead_frame = None # Frame to be sent to streamer, starts as None
+
+                if current_frame_to_process is not None:
                     self.overhead_frames_received_count += 1
                     
                     # detect_robot_pose now returns (r_x, r_y, m_theta_rad, m_x, m_y) or None
-                    full_pose_data = self.overhead_localizer.detect_robot_pose(raw_overhead_frame)
+                    # It will process the (potentially) undistorted current_frame_to_process
+                    full_pose_data = self.overhead_localizer.detect_robot_pose(current_frame_to_process)
                     
                     if full_pose_data is not None:
-                        # Unpack for self.robot_overhead_pose (the navigational pose)
                         r_x, r_y, m_theta_rad, _, _ = full_pose_data 
                         self.robot_overhead_pose = (r_x, r_y, m_theta_rad)
                         
-                        # Draw all pose indicators (marker center, rotation center, orientation line)
-                        # Pass the full_pose_data tuple to draw_pose_on_frame
-                        # Ensure we draw on a copy of the raw frame to avoid modifying it if it's reused
-                        processed_overhead_frame = self.overhead_localizer.draw_pose_on_frame(raw_overhead_frame.copy(), full_pose_data)
+                        # Draw all pose indicators on a copy of the current_frame_to_process
+                        processed_overhead_frame = self.overhead_localizer.draw_pose_on_frame(current_frame_to_process.copy(), full_pose_data)
                     else:
-                        self.robot_overhead_pose = None # Explicitly set to None if not detected
-                        processed_overhead_frame = raw_overhead_frame # Send the raw frame if no pose detection
+                        self.robot_overhead_pose = None
+                        processed_overhead_frame = current_frame_to_process # Send the (potentially) undistorted frame even if no pose
 
-                    # Draw target pose indicator (e.g., pickup target) if it exists
-                    # This will draw on top of processed_overhead_frame which might already have pose indicators
                     if processed_overhead_frame is not None:
                         pickup_target = self.overhead_target_poses.get("pickup")
                         if pickup_target:
                             center_x = int(pickup_target[0])
                             center_y = int(pickup_target[1])
-                            # If processed_overhead_frame was the raw frame (because no pose was detected),
-                            # ensure we make a copy before drawing the target to avoid modifying the original raw frame.
-                            if processed_overhead_frame is raw_overhead_frame:
-                                processed_overhead_frame = raw_overhead_frame.copy()
-                            cv2.circle(processed_overhead_frame, (center_x, center_y), 10, (0, 255, 255), 2) # Yellow circle for target
+                            if processed_overhead_frame is current_frame_to_process and not full_pose_data: # Drawing on a frame not yet copied
+                                processed_overhead_frame = current_frame_to_process.copy()
+                            cv2.circle(processed_overhead_frame, (center_x, center_y), 10, (0, 255, 255), 2) # Yellow target circle
 
-                    # Send the (potentially multi-annotated) frame to the overhead streamer
                     if processed_overhead_frame is not None:
                         self.overhead_video_streamer.set_frame(processed_overhead_frame)
+                    elif current_frame_to_process is not None: # If pose detection failed but we have an undistorted frame
+                        self.overhead_video_streamer.set_frame(current_frame_to_process) 
                     
-                # else: raw_overhead_frame was None, do nothing with it for streamer
-
-                # Log overhead camera FPS periodically (Commented out as per user request)
-                # current_time_for_fps_log = time.time()
-                # if current_time_for_fps_log - self.last_overhead_log_time >= self.log_interval_seconds:
-                #     elapsed_time = current_time_for_fps_log - self.last_overhead_log_time
-                #     if elapsed_time > 0: # Avoid division by zero if interval is very small or time didn't advance
-                #         fps = self.overhead_frames_received_count / elapsed_time
-                #         logger.info(f"Overhead Camera FPS (Pi perspective): {fps:.2f} FPS ({self.overhead_frames_received_count} frames in {elapsed_time:.2f}s)")
-                #     else:
-                #         logger.info(f"Overhead Camera FPS (Pi perspective): Unable to calculate FPS, zero elapsed time. Frames: {self.overhead_frames_received_count}")
-                #     self.overhead_frames_received_count = 0
-                #     self.last_overhead_log_time = current_time_for_fps_log
-
+                # Autonomous navigation logic (uses self.robot_overhead_pose which is from undistorted frame)
                 if self.test_autonav_active:
                     # Autonomous navigation logic using overhead camera pose
                     current_overhead_pose_from_server = self.robot_overhead_pose # Use the continuously updated pose
