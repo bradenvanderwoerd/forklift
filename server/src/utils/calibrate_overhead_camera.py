@@ -50,9 +50,22 @@ def main_calibration_loop():
     logger.info(f"Connecting to overhead camera at {OVERHEAD_CAMERA_HOST}:{OVERHEAD_CAMERA_PORT}")
 
     camera_client = WarehouseCameraClient(host=OVERHEAD_CAMERA_HOST, port=OVERHEAD_CAMERA_PORT)
-    if not camera_client.connect(): # connect() should ideally return a status or raise exception
-        logger.error("Failed to connect to the overhead camera. Exiting.")
+    camera_client.connect() # Start connection attempt
+
+    # Wait a bit for the connection to establish in the client's thread
+    connection_attempts = 0
+    max_connection_attempts = 10 # Try for up to 5 seconds (10 * 0.5s)
+    while not camera_client.is_connected and connection_attempts < max_connection_attempts:
+        logger.info(f"Waiting for overhead camera connection... (attempt {connection_attempts + 1}/{max_connection_attempts})")
+        time.sleep(0.5)
+        connection_attempts += 1
+
+    if not camera_client.is_connected:
+        logger.error("Failed to connect to the overhead camera after multiple attempts. Exiting.")
+        camera_client.disconnect() # Attempt to clean up the client thread if it was started
         return
+    
+    logger.info("Successfully connected to overhead camera.")
 
     board = create_charuco_board()
     aruco_detector_params = aruco.DetectorParameters()
