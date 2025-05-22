@@ -137,7 +137,10 @@ class MotorController:
         """Drives the robot forward at a given speed."""
         speed = self._validate_and_adjust_speed(speed)
         logger.info(f"MotorController: drive_forward called with speed: {speed}")
-        self._set_motor_pins(self.MOTOR1_PIN1, self.MOTOR2_PIN1)
+        GPIO.output(self.MOTOR1_PIN1, GPIO.HIGH) # Left motor forward
+        GPIO.output(self.MOTOR1_PIN2, GPIO.LOW)
+        GPIO.output(self.MOTOR2_PIN1, GPIO.HIGH) # Right motor forward
+        GPIO.output(self.MOTOR2_PIN2, GPIO.LOW)
         self.pwm1.ChangeDutyCycle(speed)
         self.pwm2.ChangeDutyCycle(speed)
 
@@ -145,7 +148,10 @@ class MotorController:
         """Drives the robot backward at a given speed."""
         speed = self._validate_and_adjust_speed(speed)
         logger.info(f"MotorController: drive_backward called with speed: {speed}")
-        self._set_motor_pins(self.MOTOR1_PIN2, self.MOTOR2_PIN2)
+        GPIO.output(self.MOTOR1_PIN1, GPIO.LOW)  # Left motor backward
+        GPIO.output(self.MOTOR1_PIN2, GPIO.HIGH)
+        GPIO.output(self.MOTOR2_PIN1, GPIO.LOW)  # Right motor backward
+        GPIO.output(self.MOTOR2_PIN2, GPIO.HIGH)
         self.pwm1.ChangeDutyCycle(speed)
         self.pwm2.ChangeDutyCycle(speed)
 
@@ -153,7 +159,10 @@ class MotorController:
         """Turns the robot left at a given speed."""
         speed = self._validate_and_adjust_speed(speed)
         logger.info(f"MotorController: turn_left called with speed: {speed}")
-        self._set_motor_pins(self.MOTOR1_PIN2, self.MOTOR2_PIN1)
+        GPIO.output(self.MOTOR1_PIN1, GPIO.LOW)  # Left motor backward
+        GPIO.output(self.MOTOR1_PIN2, GPIO.HIGH)
+        GPIO.output(self.MOTOR2_PIN1, GPIO.HIGH) # Right motor forward
+        GPIO.output(self.MOTOR2_PIN2, GPIO.LOW)
         self.pwm1.ChangeDutyCycle(speed)
         self.pwm2.ChangeDutyCycle(speed)
 
@@ -161,17 +170,22 @@ class MotorController:
         """Turns the robot right at a given speed."""
         speed = self._validate_and_adjust_speed(speed)
         logger.info(f"MotorController: turn_right called with speed: {speed}")
-        self._set_motor_pins(self.MOTOR1_PIN1, self.MOTOR2_PIN2)
+        GPIO.output(self.MOTOR1_PIN1, GPIO.HIGH) # Left motor forward
+        GPIO.output(self.MOTOR1_PIN2, GPIO.LOW)
+        GPIO.output(self.MOTOR2_PIN1, GPIO.LOW)  # Right motor backward
+        GPIO.output(self.MOTOR2_PIN2, GPIO.HIGH)
         self.pwm1.ChangeDutyCycle(speed)
         self.pwm2.ChangeDutyCycle(speed)
 
     def _validate_and_adjust_speed(self, speed: float) -> float:
-        """Validate and adjust the speed to be within the valid range (-100 to 100)"""
-        return max(-100, min(100, speed))
+        """Validate and adjust the speed to be within the valid range (0-100 for these direct methods)"""
+        # Speed for these direct methods should be positive, direction is handled by pin logic
+        return max(0, min(100, abs(speed)))
 
-    def _set_motor_pins(self, pin1: int, pin2: int):
-        """Set motor directions based on the given pins"""
-        GPIO.output(self.MOTOR1_PIN1, GPIO.HIGH if pin1 > 0 else GPIO.LOW)
-        GPIO.output(self.MOTOR1_PIN2, GPIO.LOW if pin1 > 0 else GPIO.HIGH)
-        GPIO.output(self.MOTOR2_PIN1, GPIO.HIGH if pin2 > 0 else GPIO.LOW)
-        GPIO.output(self.MOTOR2_PIN2, GPIO.LOW if pin2 > 0 else GPIO.HIGH) 
+    # _set_motor_pins method is removed as its logic is now direct in drive/turn methods
+    # def _set_motor_pins(self, pin1: int, pin2: int):
+    #     """Set motor directions based on the given pins"""
+    #     GPIO.output(self.MOTOR1_PIN1, GPIO.HIGH if pin1 > 0 else GPIO.LOW)
+    #     GPIO.output(self.MOTOR1_PIN2, GPIO.LOW if pin1 > 0 else GPIO.HIGH)
+    #     GPIO.output(self.MOTOR2_PIN1, GPIO.HIGH if pin2 > 0 else GPIO.LOW)
+    #     GPIO.output(self.MOTOR2_PIN2, GPIO.LOW if pin2 > 0 else GPIO.HIGH) 
