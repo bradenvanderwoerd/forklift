@@ -82,10 +82,10 @@ OVERHEAD_NAV_FINAL_ORIENTATION_PID_KI = 0.05
 OVERHEAD_NAV_FINAL_ORIENTATION_PID_KD = 0.15
 
 # Speed limits (retained from previous, ensure they are 0-100 for PWM)
-NAV_MAX_TURNING_SPEED = 100       # Max PWM for turning, effective range 75-100
-MANUAL_TURN_SPEED = 75            # Base for manual turns if not using slider speed; also a reference.
-NAV_MAX_FORWARD_SPEED = 100       # Max PWM for forward, effective range 75-100
-NAV_MIN_EFFECTIVE_SPEED = 75      # Min PWM to ensure motors move, sets lower bound of 75-100
+MANUAL_TURN_SPEED = 75  # Default turn speed for manual control (can be overridden by client)
+NAV_MAX_TURNING_SPEED = 100     # Max speed for turning actions during navigation
+NAV_MAX_FORWARD_SPEED = 100     # Max speed for forward movement during navigation
+NAV_MIN_EFFECTIVE_SPEED = 90  # The minimum speed motor will run at during nav (scaled from PID)
 
 # --- Old Metric Navigation Constants (Commented out) ---
 # NAV_TARGET_APPROACH_DISTANCE_M = 0.15

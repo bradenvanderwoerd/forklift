@@ -43,4 +43,5 @@ Thumbs.db
 # Project specific
 *.log
 *.pid
-server/src/camera_calibration.npz 
+server/src/camera_calibration.npz
+overhead_targets.json

@@ -9,6 +9,7 @@ import asyncio
 import RPi.GPIO as GPIO
 import math
 import json # Added for JSON operations
+import cv2 # Import OpenCV for drawing
 
 from .controllers.motor import MotorController
 from .controllers.servo import ServoController
@@ -289,12 +290,46 @@ class ForkliftServer:
             self.running = False
     
     def _run_overhead_video_server(self):
-        """Run overhead video server in a separate thread"""
+        logger.info("Overhead video server thread started.")
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         try:
-            self.overhead_video_streamer.start()
+            loop.run_until_complete(self.overhead_video_streamer.start_server())
+            logger.info(f"Overhead video WebSocket server started on {self.overhead_video_streamer.host}:{self.overhead_video_streamer.port}")
+            while self.running:
+                frame = self.overhead_camera_client.get_latest_frame() # This is a blocking call with timeout
+                if frame is not None:
+                    # Detect robot pose in the frame
+                    current_time = time.monotonic()
+                    self.robot_overhead_pose, annotated_frame = self.overhead_localizer.detect_robot_pose(frame, current_time)
+                    
+                    # Draw target pose indicator if a pickup target exists
+                    pickup_target = self.overhead_target_poses.get("pickup")
+                    if pickup_target and annotated_frame is not None:
+                        # pickup_target is (x, y, theta)
+                        # We only need x, y for the circle center
+                        center_x = int(pickup_target[0])
+                        center_y = int(pickup_target[1])
+                        # Draw a yellow circle for the pickup target
+                        cv2.circle(annotated_frame, (center_x, center_y), 10, (0, 255, 255), 2) # Yellow circle, radius 10, thickness 2
+
+                    # Send the (potentially) annotated frame to clients
+                    if annotated_frame is not None:
+                        self.overhead_video_streamer.add_frame_to_queue(annotated_frame)
+                    else:
+                        # If detection failed or no frame to annotate, send the original frame
+                        self.overhead_video_streamer.add_frame_to_queue(frame)
+                else:
+                    # logger.debug("No new frame from overhead camera client.") # Can be noisy
+                    time.sleep(0.01) # Small delay if no frame to prevent busy-waiting
         except Exception as e:
-            logger.error(f"Error in overhead video server thread: {e}")
-            self.running = False
+            logger.error(f"Exception in overhead video server: {e}", exc_info=True)
+        finally:
+            if hasattr(self.overhead_video_streamer, 'server') and self.overhead_video_streamer.server:
+                self.overhead_video_streamer.server.close()
+                loop.run_until_complete(self.overhead_video_streamer.server.wait_closed())
+            loop.close()
+            logger.info("Overhead video server thread stopped.")
     
     def _run_command_server(self):
         """Run command server in a separate thread"""
