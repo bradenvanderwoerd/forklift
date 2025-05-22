@@ -17,6 +17,14 @@ class OverheadLocalizer:
         self.robot_marker_id = ROBOT_OVERHEAD_ARUCO_ID
         logger.info(f"OverheadLocalizer initialized to track ArUco ID: {self.robot_marker_id} using dictionary: {ARUCO_DICTIONARY}")
 
+    def _normalize_angle(self, angle_rad: float) -> float:
+        """Normalize an angle to the range [-pi, pi]."""
+        while angle_rad > math.pi:
+            angle_rad -= 2 * math.pi
+        while angle_rad < -math.pi:
+            angle_rad += 2 * math.pi
+        return angle_rad
+
     def detect_robot_pose(self, frame: np.ndarray) -> Optional[Tuple[float, float, float]]:
         """
         Detects the robot's ArUco marker in the frame and returns its 2D pose (x_pixel, y_pixel, theta_pixel).
@@ -73,6 +81,10 @@ class OverheadLocalizer:
                     # A marker edge from (0,0) to (0,10) -> angle pi/2 (if y points down)
                     # atan2 handles quadrants correctly.
                     angle_rad = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+                    
+                    # Adjust for 90-degree physical offset of the marker relative to robot's front
+                    angle_rad += math.pi / 2 
+                    angle_rad = self._normalize_angle(angle_rad) # Normalize the adjusted angle
                     
                     # logger.debug(f"Robot marker ID {self.robot_marker_id} found at ({center_x:.2f}, {center_y:.2f}) pixels, angle: {math.degrees(angle_rad):.2f} degrees.")
                     return (float(center_x), float(center_y), float(angle_rad))
