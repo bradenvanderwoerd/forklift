@@ -150,9 +150,9 @@ class ForkliftServer:
             elif direction == "BACKWARD":
                 self.motor_controller.drive_backward(speed)
             elif direction == "LEFT":
-                self.motor_controller.turn_right(speed)
-            elif direction == "RIGHT":
                 self.motor_controller.turn_left(speed)
+            elif direction == "RIGHT":
+                self.motor_controller.turn_right(speed)
         elif speed is not None and direction is None and action == "UPDATE_SPEED_ONLY":
              logger.info(f"Received deprecated speed update via drive cmd: {speed}. Use SET_SPEED.")
         else:
