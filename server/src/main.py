@@ -80,13 +80,15 @@ class ForkliftServer:
         logger.info("--- _handle_drive_command ENTERED ---")
         logger.info(f"Received DRIVE command data: {data}")
 
-        command_value = data.get("value", {}) 
+        command_value = data.get("value", {})
 
         direction = command_value.get("direction", "NONE")
-        speed = command_value.get("speed", 0)
-        action = command_value.get("action", "START") 
+        # Speed from the command is now used to set target_speed via _handle_set_speed_command
+        # The drive commands will use the motor_controller's internal target_speed
+        # speed = command_value.get("speed", 0) # This line is removed/commented
+        action = command_value.get("action", "START")
 
-        logger.info(f"Parsed action: {action}, direction: {direction}, speed: {speed}")
+        logger.info(f"Parsed action: {action}, direction: {direction}") # Speed removed from this log
 
         if action == "STOP" or direction == "NONE":
             logger.info("Executing STOP action or direction is NONE")
@@ -95,16 +97,16 @@ class ForkliftServer:
 
         if direction == "FORWARD":
             logger.info("Executing FORWARD action")
-            self.motor_controller.drive_forward(speed)
+            self.motor_controller.drive_forward() # Call without speed
         elif direction == "BACKWARD":
             logger.info("Executing BACKWARD action")
-            self.motor_controller.drive_backward(speed)
+            self.motor_controller.drive_backward() # Call without speed
         elif direction == "LEFT":
             logger.info("Executing LEFT action")
-            self.motor_controller.turn_left(speed)
+            self.motor_controller.turn_left() # Call without speed
         elif direction == "RIGHT":
             logger.info("Executing RIGHT action")
-            self.motor_controller.turn_right(speed)
+            self.motor_controller.turn_right() # Call without speed
         else:
             logger.info("Executing ELSE (STOP) action")
             self.motor_controller.stop()

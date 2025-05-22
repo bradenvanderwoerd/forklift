@@ -142,10 +142,10 @@ class MainWindow(QMainWindow):
         # Speed control
         speed_layout = QVBoxLayout()
         self.speed_slider = QSlider(Qt.Orientation.Vertical)
-        self.speed_slider.setRange(0, 100)
-        self.speed_slider.setValue(50)  # Start at 50%
+        self.speed_slider.setRange(80, 100)  # Set range from 80 to 100
+        self.speed_slider.setValue(80)  # Start at 80
         self.speed_slider.valueChanged.connect(self.on_speed_change)
-        speed_layout.addWidget(QLabel("Speed"))
+        speed_layout.addWidget(QLabel("Speed (80-100)")) # Update label
         speed_layout.addWidget(self.speed_slider)
         control_layout.addLayout(speed_layout)
         
@@ -203,7 +203,7 @@ class MainWindow(QMainWindow):
         self.timer.start(33)  # ~30 FPS
         
         self.is_connected = False
-        self.current_speed = 50
+        self.current_speed = 80 # Initial speed to 80
         
     def keyPressEvent(self, event: QKeyEvent):
         if not self.is_connected:
