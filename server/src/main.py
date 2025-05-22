@@ -196,18 +196,25 @@ class ForkliftServer:
         """Handles the command to toggle autonomous navigation test mode."""
         self.test_autonav_active = not self.test_autonav_active
         if self.test_autonav_active:
-            self.autonav_stage = AUTONAV_STAGE_NAVIGATING
-            logger.info(f"Autonomous navigation ACTIVATED. Stage: {self.autonav_stage}")
-            # Ensure servo is in a known state if needed, e.g., up or carry.
-            # For now, we assume it starts appropriately or the first action will set it.
+            logger.info(f"Autonomous navigation ACTIVATED.")
+            # Attempt to set the 'pickup' pose as the initial target
+            pickup_target_pose = self.overhead_target_poses.get("pickup")
+            if pickup_target_pose:
+                self.navigation_controller.set_target(pickup_target_pose)
+                self.autonav_stage = AUTONAV_STAGE_NAVIGATING # Set stage only if target is successfully set
+                logger.info(f"Initial target set to 'pickup'. Stage: {self.autonav_stage}")
+            else:
+                logger.warning("AutoNav activated, but no 'pickup' target pose is set. Robot will not navigate.")
+                self.autonav_stage = AUTONAV_STAGE_IDLE # Remain idle if no target
+                self.test_autonav_active = False # Immediately turn off autonav if no target can be set.
+                # self.motor_controller.stop() # Ensure motors are stopped. Already handled by clear_target if called.
         else:
             self.autonav_stage = AUTONAV_STAGE_IDLE
             logger.info(f"Autonomous navigation DEACTIVATED.")
             if hasattr(self, 'navigation_controller') and self.navigation_controller:
-                self.navigation_controller.clear_target() # Stops motors
-            # Optionally, reset servo to a default position, e.g., down
+                self.navigation_controller.clear_target() # Stops motors and resets NavController
             logger.info("Setting servo to FORK_DOWN_POSITION on auto-nav deactivation.")
-            self.servo_controller.set_position(FORK_DOWN_POSITION) 
+            self.servo_controller.set_position(FORK_DOWN_POSITION)
     
     def _handle_set_nav_turning_pid(self, data: Dict[str, Any]):
         """Handles command to set turning PID gains for NavigationController."""
@@ -361,43 +368,31 @@ class ForkliftServer:
                 #     self.last_overhead_log_time = current_time_for_fps_log
 
                 if self.test_autonav_active:
-                    # TODO: IMPORTANT - For actual overhead navigation, current_pose_onboard should be replaced/augmented
-                    # with self.robot_overhead_pose and appropriate target coordinates in pixel space.
-                    # The navigation_controller currently expects metric poses (tvec, rvec).
-                    # For now, autonav will continue using onboard camera data.
-                    current_pose_onboard = self.video_streamer.shared_primary_target_pose 
+                    # Autonomous navigation logic using overhead camera pose
+                    current_overhead_pose_from_server = self.robot_overhead_pose # Use the continuously updated pose
                     
                     if self.autonav_stage == AUTONAV_STAGE_NAVIGATING:
-                        if current_pose_onboard:
-                            tvec, rvec = current_pose_onboard
-                            self.navigation_controller.set_target(tvec, rvec) 
-                            
-                            nav_still_moving = self.navigation_controller.navigate()
+                        if current_overhead_pose_from_server and self.navigation_controller.current_target_pixel_pose:
+                            # Target is already set in NavController when autonav was enabled
+                            nav_still_moving = self.navigation_controller.navigate(current_overhead_pose_from_server)
 
-                            x_cam = tvec[0][0]
-                            z_cam = tvec[0][2]
-                            
-                            is_definitely_at_target = False
-                            if z_cam > 0: # Valid pose for calculation
-                                angle_to_marker_rad = math.atan2(x_cam, z_cam)
-                                current_planar_distance_m = math.sqrt(x_cam**2 + z_cam**2)
-                                if self.navigation_controller.is_at_target(angle_to_marker_rad, current_planar_distance_m):
-                                    logger.info("ForkliftServer (AutoNav NAVIGATING): Target Reached (checked in main loop via is_at_target).")
-                                    is_definitely_at_target = True
-                            
-                            if not nav_still_moving and not is_definitely_at_target:
-                                logger.info("ForkliftServer (AutoNav NAVIGATING): navigate() indicates movement stopped (likely target reached by its own logic).")
-                                is_definitely_at_target = True
-
-                            if is_definitely_at_target:
-                                logger.info("AutoNav: Target Reached! Transition: NAVIGATING -> LOWERING_FORKS")
-                                self.navigation_controller.clear_target() # Stop motors
+                            if not nav_still_moving: # Target reached according to NavigationController
+                                logger.info("AutoNav (NAVIGATING): Target Reached! Transitioning to LOWERING_FORKS.")
+                                # NavigationController should have already stopped motors.
+                                # self.navigation_controller.clear_target() # Clear NavController's internal target for safety / next run.
                                 self.autonav_stage = AUTONAV_STAGE_LOWERING_FORKS
-                            # else: Still navigating or target calculations were invalid (z_cam <= 0)
+                            # else: still navigating
                         
-                        else: # No current_pose during NAVIGATING stage
-                            logger.info("ForkliftServer (AutoNav NAVIGATING): Primary target lost. Stopping navigation.")
-                            self.navigation_controller.clear_target() # Stop motors
+                        elif not current_overhead_pose_from_server:
+                            logger.warning("AutoNav (NAVIGATING): Robot overhead pose not available. Stopping motion.")
+                            self.motor_controller.stop() # Stop motors if pose is lost
+                            # self.navigation_controller.clear_target() # Optionally clear NavController target
+                        elif not self.navigation_controller.current_target_pixel_pose:
+                            logger.warning("AutoNav (NAVIGATING): NavigationController has no target set. Stopping motion.")
+                            self.motor_controller.stop()
+                            # Consider deactivating autonav or setting to IDLE if target is unexpectedly lost from NavController
+                            # self.test_autonav_active = False 
+                            # self.autonav_stage = AUTONAV_STAGE_IDLE
 
                     elif self.autonav_stage == AUTONAV_STAGE_LOWERING_FORKS:
                         logger.info(f"AutoNav: Stage LOWERING_FORKS. Lowering forks to {AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE} deg.")

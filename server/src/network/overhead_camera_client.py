@@ -11,7 +11,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 class WarehouseCameraClient:
-    def __init__(self, host: str = "192.168.0.100", port: int = 5001):
+    def __init__(self, host: str = "192.168.0.100", port: int = 4001):
         self.host = host
         self.port = port
         self.socket: Optional[socket.socket] = None

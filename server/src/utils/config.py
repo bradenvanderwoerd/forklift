@@ -60,26 +60,44 @@ LOG_FILE = "server.log"
 LOG_MAX_BYTES = 1024 * 1024 * 5  # 5 MB max log file size
 LOG_BACKUP_COUNT = 3  # Number of backup log files to keep
 
-# --- Navigation Controller Configuration ---
-NAV_TARGET_APPROACH_DISTANCE_M = 0.15  # Target distance to stop from marker (in meters)
-NAV_DISTANCE_THRESHOLD_M = 0.02       # Allowed error in distance (meters)
-NAV_X_THRESHOLD_M = 0.02              # Allowed error in x-offset (meters) - Will be replaced by angular for centering
-NAV_X_THRESHOLD_RAD = 0.05            # Allowed angular error for centering (radians, e.g., 0.05 rad ~= 2.8 deg)
+# --- Navigation Controller Configuration (Overhead Pixel Space) ---
+OVERHEAD_NAV_TARGET_APPROACH_DISTANCE_PIXELS = 10.0 # Target distance (pixels) to stop from the target X,Y
+OVERHEAD_NAV_DISTANCE_THRESHOLD_PIXELS = 5.0    # Allowed error in pixel distance to consider target X,Y reached
+OVERHEAD_NAV_ORIENTATION_THRESHOLD_RAD = 0.1    # Allowed angular error for aligning to target *point* (radians, ~5.7 deg)
+OVERHEAD_NAV_FINAL_ANGULAR_THRESHOLD_RAD = 0.05 # Allowed angular error for final *target orientation* (radians, ~2.8 deg)
 
-# PID Gains for Turning (correcting X-offset from tvec)
-NAV_TURNING_PID_KP = 2.0  # Proportional gain for turning PID
-NAV_TURNING_PID_KI = 0.05  # Integral gain for turning PID
-NAV_TURNING_PID_KD = 0.5   # Derivative gain for turning PID
+# PID Gains for Turning to face the target point
+OVERHEAD_NAV_TURNING_PID_KP = 0.8
+OVERHEAD_NAV_TURNING_PID_KI = 0.05
+OVERHEAD_NAV_TURNING_PID_KD = 0.2
 
-# PID Gains for Distance (correcting Z-offset from tvec)
-NAV_DISTANCE_PID_KP = 1.5  # Proportional gain for distance PID
-NAV_DISTANCE_PID_KI = 0.03 # Integral gain for distance PID
-NAV_DISTANCE_PID_KD = 0.3  # Derivative gain for distance PID
+# PID Gains for Distance to the target point (pixels)
+OVERHEAD_NAV_DISTANCE_PID_KP = 0.5  # Proportional gain for pixel distance PID
+OVERHEAD_NAV_DISTANCE_PID_KI = 0.02 # Integral gain for pixel distance PID
+OVERHEAD_NAV_DISTANCE_PID_KD = 0.1  # Derivative gain for pixel distance PID
 
-NAV_MAX_TURNING_SPEED = 100       # Maximum speed for turning (PWM duty cycle), effectively 75-100
-MANUAL_TURN_SPEED = 75            # Fixed speed for MANUAL turning actions (0-100 for motor controller), now effectively 75-100
-NAV_MAX_FORWARD_SPEED = 100       # Maximum speed for forward/backward movement (PWM duty cycle), effectively 75-100
-NAV_MIN_EFFECTIVE_SPEED = 75      # Minimum speed to ensure motors engage, effectively sets the lower bound of 75-100 range
+# PID Gains for achieving the Final Target Orientation (after X,Y is reached)
+OVERHEAD_NAV_FINAL_ORIENTATION_PID_KP = 0.7
+OVERHEAD_NAV_FINAL_ORIENTATION_PID_KI = 0.05
+OVERHEAD_NAV_FINAL_ORIENTATION_PID_KD = 0.15
+
+# Speed limits (retained from previous, ensure they are 0-100 for PWM)
+NAV_MAX_TURNING_SPEED = 100       # Max PWM for turning, effective range 75-100
+MANUAL_TURN_SPEED = 75            # Base for manual turns if not using slider speed; also a reference.
+NAV_MAX_FORWARD_SPEED = 100       # Max PWM for forward, effective range 75-100
+NAV_MIN_EFFECTIVE_SPEED = 75      # Min PWM to ensure motors move, sets lower bound of 75-100
+
+# --- Old Metric Navigation Constants (Commented out) ---
+# NAV_TARGET_APPROACH_DISTANCE_M = 0.15
+# NAV_DISTANCE_THRESHOLD_M = 0.02
+# NAV_X_THRESHOLD_M = 0.02
+# NAV_X_THRESHOLD_RAD = 0.05
+# NAV_TURNING_PID_KP = 2.0
+# NAV_TURNING_PID_KI = 0.05
+# NAV_TURNING_PID_KD = 0.5
+# NAV_DISTANCE_PID_KP = 1.5
+# NAV_DISTANCE_PID_KI = 0.03
+# NAV_DISTANCE_PID_KD = 0.3
 
 # --- Servo Control Configuration ---
 SERVO_STEP_DEGREES = 1          # Degrees to move the servo per step for smooth movement
