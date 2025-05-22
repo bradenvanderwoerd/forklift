@@ -6,7 +6,11 @@ from typing import Optional, Tuple
 
 # Assuming config is in server.src.utils.config
 # This relative import might need adjustment depending on how this module is imported/used
-from ..utils.config import ARUCO_DICTIONARY, ROBOT_OVERHEAD_ARUCO_ID
+from ..utils.config import (
+    ARUCO_DICTIONARY, ROBOT_OVERHEAD_ARUCO_ID,
+    MARKER_TO_ROTATION_CENTER_X_OFFSET_PIXELS as X_OFFSET,
+    MARKER_TO_ROTATION_CENTER_Y_OFFSET_PIXELS as Y_OFFSET
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +19,10 @@ class OverheadLocalizer:
         self.aruco_dict = cv2.aruco.getPredefinedDictionary(ARUCO_DICTIONARY)
         self.aruco_params = cv2.aruco.DetectorParameters()
         self.robot_marker_id = ROBOT_OVERHEAD_ARUCO_ID
+        self.x_offset = X_OFFSET
+        self.y_offset = Y_OFFSET
         logger.info(f"OverheadLocalizer initialized to track ArUco ID: {self.robot_marker_id} using dictionary: {ARUCO_DICTIONARY}")
+        logger.info(f"Robot center offset from marker: X={self.x_offset}px, Y={self.y_offset}px (marker perspective)")
 
     def _normalize_angle(self, angle_rad: float) -> float:
         """Normalize an angle to the range [-pi, pi]."""
@@ -25,19 +32,21 @@ class OverheadLocalizer:
             angle_rad += 2 * math.pi
         return angle_rad
 
-    def detect_robot_pose(self, frame: np.ndarray) -> Optional[Tuple[float, float, float]]:
+    def detect_robot_pose(self, frame: np.ndarray) -> Optional[Tuple[float, float, float, float, float]]:
         """
-        Detects the robot's ArUco marker in the frame and returns its 2D pose (x_pixel, y_pixel, theta_pixel).
+        Detects the robot's ArUco marker in the frame and returns its 2D pose (r_x, r_y, m_theta_rad, m_x, m_y).
 
         Args:
             frame: The overhead camera image (NumPy array).
 
         Returns:
-            A tuple (x_pixel, y_pixel, theta_pixel) if the robot marker is found, otherwise None.
-            x_pixel: The x-coordinate of the marker's center in pixels.
-            y_pixel: The y-coordinate of the marker's center in pixels.
-            theta_pixel: The orientation of the marker in radians, relative to the image's positive x-axis.
+            A tuple (r_x, r_y, m_theta_rad, m_x, m_y) if the robot marker is found, otherwise None.
+            r_x: The x-coordinate of the robot's rotation center in pixels.
+            r_y: The y-coordinate of the robot's rotation center in pixels.
+            m_theta_rad: The orientation of the robot in radians, relative to the image's positive x-axis.
                          0 radians points to the right. Positive angles are counter-clockwise.
+            m_x: The x-coordinate of the marker's center in pixels.
+            m_y: The y-coordinate of the marker's center in pixels.
         """
         if frame is None:
             logger.warning("OverheadLocalizer.detect_robot_pose received a None frame.")
@@ -51,16 +60,11 @@ class OverheadLocalizer:
                 if marker_id[0] == self.robot_marker_id:
                     marker_corners = corners[i][0] # Get the four corners of the detected marker
 
-                    # Calculate the center of the marker (x_pixel, y_pixel)
-                    center_x = np.mean(marker_corners[:, 0])
-                    center_y = np.mean(marker_corners[:, 1])
+                    # Calculate the center of the marker (m_x, m_y)
+                    m_x = np.mean(marker_corners[:, 0])
+                    m_y = np.mean(marker_corners[:, 1])
 
-                    # Calculate orientation (theta_pixel)
-                    # We'll use the vector from the top-left corner (0) to the top-right corner (1)
-                    # to determine the orientation.
-                    # Corners are usually ordered: 0: top-left, 1: top-right, 2: bottom-right, 3: bottom-left
-                    
-                    # Check if we have enough corners (should be 4)
+                    # Calculate orientation (m_theta_rad) based on marker corners
                     if len(marker_corners) < 2:
                         logger.warning(f"Marker ID {self.robot_marker_id} detected but with less than 2 corners. Cannot calculate orientation.")
                         return None
@@ -68,59 +72,54 @@ class OverheadLocalizer:
                     p1 = marker_corners[0] # Top-left
                     p2 = marker_corners[1] # Top-right
                     
-                    # Calculate the angle of the vector p1->p2 relative to the positive x-axis
-                    # The y-axis in image coordinates is typically inverted (positive downwards)
-                    # So, dy = p2[1] - p1[1] means:
-                    # - if p2 is lower than p1, dy is positive.
-                    # - if p2 is higher than p1, dy is negative.
-                    # math.atan2(dy, dx)
-                    # dx = p2[0] - p1[0]
-                    # dy = p2[1] - p1[1]
-                    # Angle from positive x-axis, counter-clockwise.
-                    # A marker edge from (0,0) to (10,0) -> angle 0
-                    # A marker edge from (0,0) to (0,10) -> angle pi/2 (if y points down)
-                    # atan2 handles quadrants correctly.
-                    angle_rad = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
-                    
-                    # Adjust for 90-degree physical offset of the marker relative to robot's front
-                    angle_rad -= math.pi / 2 # Changed from + to - for a clockwise 90-degree adjustment
-                    angle_rad = self._normalize_angle(angle_rad) # Normalize the adjusted angle
-                    
-                    # logger.debug(f"Robot marker ID {self.robot_marker_id} found at ({center_x:.2f}, {center_y:.2f}) pixels, angle: {math.degrees(angle_rad):.2f} degrees.")
-                    return (float(center_x), float(center_y), float(angle_rad))
-            
-            # Robot marker ID not found among detected markers
-            # logger.debug(f"Detected markers {ids.flatten()} but not the robot ID {self.robot_marker_id}")
-            return None
-        else:
-            # No markers detected at all
-            # logger.debug("No ArUco markers detected in the overhead frame.")
-            return None
+                    m_theta_rad = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+                    m_theta_rad -= math.pi / 2 # Existing 90-degree clockwise adjustment for marker vs robot front
+                    m_theta_rad = self._normalize_angle(m_theta_rad) # Normalize the adjusted angle
 
-    def draw_pose_on_frame(self, frame: np.ndarray, pose: Tuple[float, float, float]) -> np.ndarray:
+                    # Calculate true robot rotation center (r_x, r_y) based on marker center, orientation, and offsets
+                    # Rotate the offset vector (self.x_offset, self.y_offset) by m_theta_rad
+                    # and add it to the marker center (m_x, m_y).
+                    # Note: self.x_offset is along the robot's perceived forward, self.y_offset is to its left.
+                    r_x = m_x + (self.x_offset * math.cos(m_theta_rad) - self.y_offset * math.sin(m_theta_rad))
+                    r_y = m_y + (self.x_offset * math.sin(m_theta_rad) + self.y_offset * math.cos(m_theta_rad))
+                    
+                    # The robot's final reported pose is (r_x, r_y, m_theta_rad)
+                    # We also pass the original marker center for drawing purposes.
+                    # logger.debug(f"Robot marker ID {self.robot_marker_id} found at M=({m_x:.0f}, {m_y:.0f}), R=({r_x:.0f}, {r_y:.0f}), Theta={math.degrees(m_theta_rad):.1f}")
+                    return (float(r_x), float(r_y), float(m_theta_rad), float(m_x), float(m_y)) # Return r_x, r_y, theta, m_x, m_y
+            
+            return None # Robot marker ID not found
+        else:
+            return None # No markers detected
+
+    def draw_pose_on_frame(self, frame: np.ndarray, pose_data: Tuple[float, float, float, float, float]) -> np.ndarray:
         """
         Draws the detected pose (center and orientation line) on the frame.
+        Also draws the original marker center.
 
         Args:
             frame: The image frame to draw on.
-            pose: The (x_pixel, y_pixel, theta_pixel) pose.
+            pose_data: Tuple containing (r_x, r_y, m_theta_rad, m_x, m_y).
 
         Returns:
             The frame with the pose drawn on it.
         """
-        if pose is None:
+        if pose_data is None:
             return frame
 
-        x_center, y_center, angle_rad = pose
+        r_x, r_y, m_theta_rad, m_x, m_y = pose_data
         
-        # Draw the center
-        cv2.circle(frame, (int(x_center), int(y_center)), 5, (0, 0, 255), -1) # Red circle for center
+        # Draw the original marker center (small blue dot)
+        cv2.circle(frame, (int(m_x), int(m_y)), 3, (255, 0, 0), -1) # Blue dot for marker center
 
-        # Draw orientation line
+        # Draw the calculated robot rotation center (small magenta circle)
+        cv2.circle(frame, (int(r_x), int(r_y)), 5, (255, 0, 255), -1) # Magenta circle for rotation center
+
+        # Draw orientation line from the robot rotation center (r_x, r_y)
         line_length = 50 # pixels
-        end_x = int(x_center + line_length * math.cos(angle_rad))
-        end_y = int(y_center + line_length * math.sin(angle_rad))
-        cv2.line(frame, (int(x_center), int(y_center)), (end_x, end_y), (0, 255, 0), 2) # Green line for orientation
+        end_x = int(r_x + line_length * math.cos(m_theta_rad))
+        end_y = int(r_y + line_length * math.sin(m_theta_rad))
+        cv2.line(frame, (int(r_x), int(r_y)), (end_x, end_y), (0, 255, 0), 2) # Green line for orientation from rotation center
 
         return frame
 

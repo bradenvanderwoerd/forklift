@@ -337,40 +337,41 @@ class ForkliftServer:
             while self.running:
                 # Get overhead camera frame
                 raw_overhead_frame = self.overhead_camera_client.get_video_frame()
-                # current_time = time.monotonic() # Not used by current localizer
                 processed_overhead_frame = None # Frame to be sent to streamer
 
                 if raw_overhead_frame is not None:
                     self.overhead_frames_received_count += 1
                     
-                    # Detect robot pose from the raw frame
-                    # This returns: Optional[Tuple[float, float, float]]
-                    detected_pose = self.overhead_localizer.detect_robot_pose(raw_overhead_frame)
+                    # detect_robot_pose now returns (r_x, r_y, m_theta_rad, m_x, m_y) or None
+                    full_pose_data = self.overhead_localizer.detect_robot_pose(raw_overhead_frame)
                     
-                    annotated_frame_from_localizer = None
-                    if detected_pose is not None:
-                        self.robot_overhead_pose = detected_pose
-                        # Get the annotated frame by calling draw_pose_on_frame separately
-                        annotated_frame_from_localizer = self.overhead_localizer.draw_pose_on_frame(raw_overhead_frame.copy(), detected_pose)
-                        processed_overhead_frame = annotated_frame_from_localizer
+                    if full_pose_data is not None:
+                        # Unpack for self.robot_overhead_pose (the navigational pose)
+                        r_x, r_y, m_theta_rad, _, _ = full_pose_data 
+                        self.robot_overhead_pose = (r_x, r_y, m_theta_rad)
+                        
+                        # Draw all pose indicators (marker center, rotation center, orientation line)
+                        # Pass the full_pose_data tuple to draw_pose_on_frame
+                        # Ensure we draw on a copy of the raw frame to avoid modifying it if it's reused
+                        processed_overhead_frame = self.overhead_localizer.draw_pose_on_frame(raw_overhead_frame.copy(), full_pose_data)
                     else:
                         self.robot_overhead_pose = None # Explicitly set to None if not detected
                         processed_overhead_frame = raw_overhead_frame # Send the raw frame if no pose detection
 
-                    # Draw target pose indicator if a pickup target exists
-                    # Ensure processed_overhead_frame is not None before drawing on it
+                    # Draw target pose indicator (e.g., pickup target) if it exists
+                    # This will draw on top of processed_overhead_frame which might already have pose indicators
                     if processed_overhead_frame is not None:
                         pickup_target = self.overhead_target_poses.get("pickup")
                         if pickup_target:
                             center_x = int(pickup_target[0])
                             center_y = int(pickup_target[1])
-                            # If annotated_frame_from_localizer was None, processed_overhead_frame might be raw_overhead_frame.
-                            # Ensure we have a mutable copy if it's the raw frame and we haven't copied it yet.
-                            if annotated_frame_from_localizer is None and processed_overhead_frame is raw_overhead_frame:
+                            # If processed_overhead_frame was the raw frame (because no pose was detected),
+                            # ensure we make a copy before drawing the target to avoid modifying the original raw frame.
+                            if processed_overhead_frame is raw_overhead_frame:
                                 processed_overhead_frame = raw_overhead_frame.copy()
-                            cv2.circle(processed_overhead_frame, (center_x, center_y), 10, (0, 255, 255), 2) # Yellow circle
+                            cv2.circle(processed_overhead_frame, (center_x, center_y), 10, (0, 255, 255), 2) # Yellow circle for target
 
-                    # Send the (potentially) annotated frame to the overhead streamer
+                    # Send the (potentially multi-annotated) frame to the overhead streamer
                     if processed_overhead_frame is not None:
                         self.overhead_video_streamer.set_frame(processed_overhead_frame)
                     

@@ -111,6 +111,14 @@ OVERHEAD_VIDEO_WEBSOCKET_PORT = 3458 # New port for streaming overhead video via
 # ARUCO_DICTIONARY_OVERHEAD = cv2.aruco.DICT_6X6_50 # Defined globally if same as ARUCO_DICTIONARY
 # If you use a different dictionary for overhead, define it here and import cv2 if not already.
 
+# --- Overhead Robot Pose Offset Configuration ---
+# Offsets from the ArUco marker's center to the robot's true center of rotation (e.g., midpoint of axle).
+# These are in pixels, from the marker's perspective when the robot is facing its local 0 radians (forward).
+# - X_OFFSET: Positive is "ahead" of the marker, negative is "behind".
+# - Y_OFFSET: Positive is to the marker's "left", negative is to the marker's "right".
+MARKER_TO_ROTATION_CENTER_X_OFFSET_PIXELS = 5
+MARKER_TO_ROTATION_CENTER_Y_OFFSET_PIXELS = -5 # 5 pixels to the right
+
 # Example of static locations in pixel space (to be determined via calibration/manual clicking)
 # These are placeholders and need to be filled after implementing Sub-Phase 5.2
 OVERHEAD_VIEW_STATIC_LOCATIONS = {
