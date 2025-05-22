@@ -85,7 +85,7 @@ OVERHEAD_NAV_FINAL_ORIENTATION_PID_KD = 0.15
 MANUAL_TURN_SPEED = 75  # Default turn speed for manual control (can be overridden by client)
 NAV_MAX_TURNING_SPEED = 100     # Max speed for turning actions during navigation
 NAV_MAX_FORWARD_SPEED = 100     # Max speed for forward movement during navigation
-NAV_MIN_EFFECTIVE_SPEED = 90  # The minimum speed motor will run at during nav (scaled from PID)
+NAV_MIN_EFFECTIVE_SPEED = 80  # The minimum speed motor will run at during nav (scaled from PID)
 
 # --- Old Metric Navigation Constants (Commented out) ---
 # NAV_TARGET_APPROACH_DISTANCE_M = 0.15
