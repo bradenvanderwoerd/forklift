@@ -117,7 +117,7 @@ OVERHEAD_VIDEO_WEBSOCKET_PORT = 3458 # New port for streaming overhead video via
 # - X_OFFSET: Positive is "ahead" of the marker, negative is "behind".
 # - Y_OFFSET: Positive is to the marker's "left", negative is to the marker's "right".
 MARKER_TO_ROTATION_CENTER_X_OFFSET_PIXELS = 10
-MARKER_TO_ROTATION_CENTER_Y_OFFSET_PIXELS = -10 # 5 pixels to the right
+MARKER_TO_ROTATION_CENTER_Y_OFFSET_PIXELS = 8 # 5 pixels to the right
 
 # Example of static locations in pixel space (to be determined via calibration/manual clicking)
 # These are placeholders and need to be filled after implementing Sub-Phase 5.2
