@@ -83,7 +83,7 @@ class OverheadLocalizer:
                     angle_rad = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
                     
                     # Adjust for 90-degree physical offset of the marker relative to robot's front
-                    angle_rad += math.pi / 2 
+                    angle_rad -= math.pi / 2 # Changed from + to - for a clockwise 90-degree adjustment
                     angle_rad = self._normalize_angle(angle_rad) # Normalize the adjusted angle
                     
                     # logger.debug(f"Robot marker ID {self.robot_marker_id} found at ({center_x:.2f}, {center_y:.2f}) pixels, angle: {math.degrees(angle_rad):.2f} degrees.")
