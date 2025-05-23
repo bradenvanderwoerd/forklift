@@ -102,17 +102,17 @@ OVERHEAD_NAV_ORIENTATION_THRESHOLD_RAD = 0.1    # Allowed angular error for alig
 OVERHEAD_NAV_FINAL_ANGULAR_THRESHOLD_RAD = 0.05 # Allowed angular error for final *target orientation* (radians, ~2.8 deg)
 
 # PID Gains for Turning to face the target point
-OVERHEAD_NAV_TURNING_PID_KP = 0.001
+OVERHEAD_NAV_TURNING_PID_KP = 5.0
 OVERHEAD_NAV_TURNING_PID_KI = 0
 OVERHEAD_NAV_TURNING_PID_KD = 0.05
 
 # PID Gains for Distance to the target point (pixels)
-OVERHEAD_NAV_DISTANCE_PID_KP = 0.1  # Proportional gain for pixel distance PID
-OVERHEAD_NAV_DISTANCE_PID_KI = 0 # Integral gain for pixel distance PID
-OVERHEAD_NAV_DISTANCE_PID_KD = 0.2  # Derivative gain for pixel distance PID
+OVERHEAD_NAV_DISTANCE_PID_KP = 0.1
+OVERHEAD_NAV_DISTANCE_PID_KI = 0
+OVERHEAD_NAV_DISTANCE_PID_KD = 0.2
 
 # PID Gains for achieving the Final Target Orientation (after X,Y is reached)
-OVERHEAD_NAV_FINAL_ORIENTATION_PID_KP = 0.7
+OVERHEAD_NAV_FINAL_ORIENTATION_PID_KP = 2.0
 OVERHEAD_NAV_FINAL_ORIENTATION_PID_KI = 0.05
 OVERHEAD_NAV_FINAL_ORIENTATION_PID_KD = 0.15
 
