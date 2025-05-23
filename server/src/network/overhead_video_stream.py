@@ -86,7 +86,7 @@ class OverheadStreamer:
             self.port,
             ping_interval=20,
             ping_timeout=20,
-            max_size=None 
+            reuse_address=True
         ) as server:
             self.server = server
             self.running = True

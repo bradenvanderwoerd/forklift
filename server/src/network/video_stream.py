@@ -304,13 +304,15 @@ class VideoStreamer:
     async def start_server_async(self):
         """Start the WebSocket server (async part)"""
         self._stop_event = asyncio.Event()
+        # Explicitly set reuse_address, though it should be default True on non-Windows
         async with ws_serve(
             self._handle_client,
             self.host,
             self.port,
             ping_interval=20,
             ping_timeout=20,
-            max_size=None
+            max_size=None, # Ensure max_size is present if it was before
+            reuse_address=True
         ) as server:
             self.server = server
             self.running = True
