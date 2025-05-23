@@ -22,6 +22,7 @@ class DirectWarehouseFeedReceiver:
         self._stop_event = threading.Event()
         self._reconnect_delay = 1.0  # Start with 1 second delay
         self._max_reconnect_delay = 30.0  # Maximum delay
+        self.consecutive_failures = 0 # Added for exponential backoff
 
         # JPEG Start of Image (SOI) and End of Image (EOI) markers
         self._jpeg_soi = b'\xff\xd8'
@@ -29,11 +30,10 @@ class DirectWarehouseFeedReceiver:
         
     def connect(self):
         if self.is_connected and self.thread and self.thread.is_alive():
-            logger.warning("DirectWarehouseFeedReceiver: Already connected and thread is running.")
+            logger.warning("DirectWarehouseFeedReceiver: Already connected.")
             return
-            
         self._stop_event.clear()
-        # Ensure thread name is unique if multiple instances or similar threads run
+        self.consecutive_failures = 0 # Reset on new connect attempt
         self.thread = threading.Thread(target=self._run_client, name="DirectWarehouseFeedThread")
         self.thread.daemon = True # Important for clean exit
         self.thread.start()
@@ -67,7 +67,7 @@ class DirectWarehouseFeedReceiver:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.settimeout(3.0) # Socket operations timeout
+            sock.settimeout(2.0) # Consistent with server's connected socket timeout
             return sock
         except Exception as e:
             logger.error(f"DirectWarehouseFeedReceiver: Error creating socket: {e}")
@@ -93,108 +93,119 @@ class DirectWarehouseFeedReceiver:
                     self.is_connected = True
                     logger.info(f"DirectWarehouseFeedReceiver: Connected to {self.host}:{self.port}")
                     self._reconnect_delay = 1.0 # Reset reconnect delay on successful connection
+                    self.consecutive_failures = 0 # Reset on successful connect
                 
                 current_time = time.time()
                 
                 if current_time - last_video_request_time >= video_request_interval_seconds:
-                    command_to_send_g1 = b"G 1\n" # Ensure newline, some servers might need it
+                    command_to_send_g1 = b"G 1\n" # Ensure newline
                     
                     try:
                         self.socket.sendall(command_to_send_g1)
                     except Exception as e:
-                        logger.error(f"DirectWarehouseFeedReceiver: Error sending G 1 command: {e}")
+                        logger.error(f"DirectWarehouseFeedReceiver: Error sending G 1: {e}")
                         self._handle_connection_error()
                         continue
 
-                    last_video_request_time = current_time # Update time after successful send
-                    
-                    # Read JPEG stream
-                    frame_buffer = bytearray()
-                    found_soi = False
-                    
-                    # Timeout for receiving a single frame
-                    frame_receive_start_time = time.time()
-                    # Socket timeout is 3s, allow slightly more for full frame.
-                    FRAME_TIMEOUT_SECONDS = self.socket.gettimeout() * 1.5 
+                    frame_data = bytearray()
+                    image_receive_start_time = time.time()
+                    RECV_BUFFER_SIZE = 8192
+                    MAX_IMAGE_BYTES = 5 * 1024 * 1024 
+                    FRAME_RECEIVE_TIMEOUT = self.socket.gettimeout() * 2.5 # e.g., 5 seconds for a frame
 
-                    while time.time() - frame_receive_start_time < FRAME_TIMEOUT_SECONDS:
-                        try:
-                            chunk = self.socket.recv(4096) # Read in chunks
+                    try:
+                        while True: # Inner loop for reading one frame data
+                            if time.time() - image_receive_start_time > FRAME_RECEIVE_TIMEOUT:
+                                logger.warning(f"DirectWarehouseFeedReceiver: Timeout receiving image. Received {len(frame_data)} bytes.")
+                                self._handle_connection_error() 
+                                raise socket.timeout("Image receive overall timeout")
+
+                            bytes_to_read = min(RECV_BUFFER_SIZE, MAX_IMAGE_BYTES - len(frame_data) + RECV_BUFFER_SIZE // 2)
+                            if bytes_to_read <= 0 and len(frame_data) >= MAX_IMAGE_BYTES:
+                               logger.warning(f"DirectWarehouseFeedReceiver: Exceeded max image bytes ({MAX_IMAGE_BYTES}) before EOI.")
+                               self._handle_connection_error()
+                               raise ConnectionError("Max image byte limit exceeded before EOI")
+
+                            chunk = self.socket.recv(bytes_to_read if bytes_to_read > 0 else RECV_BUFFER_SIZE)
                             if not chunk:
-                                logger.warning("DirectWarehouseFeedReceiver: Connection closed by server while reading frame.")
+                                logger.warning("DirectWarehouseFeedReceiver: Connection closed by server (recv empty).")
                                 self._handle_connection_error()
-                                break 
+                                raise ConnectionError("Connection closed by server reading image")
                             
-                            frame_buffer.extend(chunk)
+                            frame_data.extend(chunk)
+                            if frame_data.endswith(self._jpeg_eoi):
+                                break # Full JPEG frame received
+                            if len(frame_data) > MAX_IMAGE_BYTES:
+                                logger.warning(f"DirectWarehouseFeedReceiver: Exceeded max image bytes ({MAX_IMAGE_BYTES}) after recv, no EOI.")
+                                self._handle_connection_error()
+                                raise ConnectionError("Max image byte limit, no EOI")
+                        
+                        # EOI found, now decode
+                        soi_index = frame_data.rfind(self._jpeg_soi) # Find LAST SOI
+                        if soi_index != -1:
+                            jpeg_data_to_decode = frame_data[soi_index:]
+                            frame_np = cv2.imdecode(np.frombuffer(jpeg_data_to_decode, dtype=np.uint8), cv2.IMREAD_COLOR)
+                            if frame_np is not None:
+                                if not self.video_queue.full():
+                                    self.video_queue.put_nowait(frame_np)
+                                else:
+                                    self.video_queue.get_nowait() # Make space
+                                    self.video_queue.put_nowait(frame_np)
+                            else:
+                                logger.warning(f"DirectWarehouseFeedReceiver: cv2.imdecode failed for {len(jpeg_data_to_decode)} bytes (SOI found). Original: {len(frame_data)} bytes.")
+                        else:
+                            logger.warning(f"DirectWarehouseFeedReceiver: EOI found but no SOI in {len(frame_data)} bytes.")
+                    except (socket.timeout, ConnectionError, ConnectionResetError) as e: 
+                        logger.warning(f"DirectWarehouseFeedReceiver: Network error receiving image: {e}")
+                        # _handle_connection_error() should be called by the logic that raised or in this path
+                        continue 
+                    except Exception as e_img:
+                        logger.error(f"DirectWarehouseFeedReceiver: Unexpected error processing image: {e_img}", exc_info=True)
+                        self._handle_connection_error()
+                        continue
+                    last_video_request_time = time.time()
 
-                            if not found_soi:
-                                soi_index = frame_buffer.find(self._jpeg_soi)
-                                if soi_index != -1:
-                                    frame_buffer = frame_buffer[soi_index:] # Start of a new frame
-                                    found_soi = True
-                            
-                            if found_soi:
-                                eoi_index = frame_buffer.find(self._jpeg_eoi)
-                                if eoi_index != -1:
-                                    jpeg_data = frame_buffer[:eoi_index + len(self._jpeg_eoi)]
-                                    frame_buffer = frame_buffer[eoi_index + len(self._jpeg_eoi):] # Keep remainder for next frame
-                                    
-                                    try:
-                                        frame = cv2.imdecode(np.frombuffer(jpeg_data, dtype=np.uint8), cv2.IMREAD_COLOR)
-                                        if frame is not None:
-                                            if not self.video_queue.full():
-                                                self.video_queue.put_nowait(frame)
-                                            else:
-                                                self.video_queue.get_nowait() # Make space
-                                                self.video_queue.put_nowait(frame)
-                                        else:
-                                            logger.warning("DirectWarehouseFeedReceiver: Failed to decode JPEG frame.")
-                                    except Exception as e_decode:
-                                        logger.error(f"DirectWarehouseFeedReceiver: Error decoding frame: {e_decode}")
-                                    found_soi = False # Look for next SOI
-                                    break # Successfully processed one frame
-
-                        except socket.timeout:
-                            logger.debug("DirectWarehouseFeedReceiver: Socket timeout while reading frame chunk.")
-                            break # Break from chunk reading loop, will try G1 again or reconnect
-                        except Exception as e_recv:
-                            logger.error(f"DirectWarehouseFeedReceiver: Error receiving frame chunk: {e_recv}")
-                            self._handle_connection_error()
-                            break 
-                    else: # Outer while loop timed out without breaking from chunk loop
-                        if not found_soi or not self._jpeg_eoi in frame_buffer:
-                             logger.warning(f"DirectWarehouseFeedReceiver: Full frame timeout. Buffer size: {len(frame_buffer)}")
-
-
-            except Exception as e_outer:
-                logger.error(f"DirectWarehouseFeedReceiver: Unhandled exception in _run_client: {e_outer}", exc_info=True)
-                self._handle_connection_error() # Generic error handling
+            except (socket.timeout, ConnectionError, ConnectionResetError) as e_outer_net:
+                logger.warning(f"DirectWarehouseFeedReceiver: Outer loop net error: {e_outer_net}")
+                self._handle_connection_error()
+            except Exception as e_outer_generic:
+                logger.error(f"DirectWarehouseFeedReceiver: Outer loop unexpected error: {e_outer_generic}", exc_info=True)
+                self._handle_connection_error() # Ensure robust handling
 
         self._cleanup_socket()
-        self.is_connected = False
+        self.is_connected = False # Ensure state is false on exit
         logger.info(f"DirectWarehouseFeedReceiver: Thread {threading.current_thread().name} finished.")
 
     def _handle_connection_error(self, is_connect_phase: bool = False):
-        logger.warning(f"DirectWarehouseFeedReceiver: Connection error occurred.")
-        self._cleanup_socket()
-        self.is_connected = False
+        # Set state before potential sleep
+        self.is_connected = False 
+        if self.socket: # Ensure socket is closed before potentially sleeping
+            self._cleanup_socket() # Call the method that handles actual closing
         
-        if self._stop_event.is_set(): # If stopping, don't attempt to reconnect
+        self.consecutive_failures +=1
+        if self._stop_event.is_set():
+            logger.info("DirectWarehouseFeedReceiver: Stop event set, not reconnecting.")
             return
 
-        logger.info(f"DirectWarehouseFeedReceiver: Will attempt to reconnect in {self._reconnect_delay:.1f}s...")
-        time.sleep(self._reconnect_delay)
-        self._reconnect_delay = min(self._reconnect_delay * 2, self._max_reconnect_delay)
+        # Exponential backoff for reconnect delay
+        delay_factor_exponent = min(self.consecutive_failures, 6) # Cap exponent to avoid overly long delays
+        current_delay = self._reconnect_delay * (1.5 ** delay_factor_exponent)
+        delay = min(current_delay, self._max_reconnect_delay)
+        
+        log_message = f"Failed to connect. Retrying in {delay:.1f}s..." if is_connect_phase else f"Connection lost. Reconnecting in {delay:.1f}s..."
+        logger.info(f"DirectWarehouseFeedReceiver: {log_message}")
+        time.sleep(delay)
 
     def _cleanup_socket(self):
         if self.socket:
+            logger.debug("DirectWarehouseFeedReceiver: Cleaning up socket...")
             try:
                 self.socket.shutdown(socket.SHUT_RDWR)
-            except Exception:
-                pass # Ignore errors on shutdown
+            except (OSError, socket.error):
+                pass 
             try:
                 self.socket.close()
-            except Exception:
-                pass # Ignore errors on close
+            except (OSError, socket.error):
+                pass
             self.socket = None
-        logger.debug("DirectWarehouseFeedReceiver: Socket cleaned up.") 
+            logger.debug("DirectWarehouseFeedReceiver: Socket cleaned up.") 
