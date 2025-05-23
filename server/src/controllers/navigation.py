@@ -198,78 +198,69 @@ class NavigationController:
         # --- State 1: Align to Target Point XY ---
         if abs(angle_to_point_error_rad) > self.orientation_to_point_threshold_rad:
             # PID error: setpoint (0) - current_error. If angle_to_point_error_rad is positive (target is CCW from robot heading),
-            # then -angle_to_point_error_rad is negative. PID output should be negative for CCW turn (convention in motor controller turn_left/right).
-            # Let's adjust PID interpretation: Positive PID output for turn_left (CCW), Negative for turn_right (CW).
-            # So, if error is positive (target is CCW), we want positive PID output.
-            turn_effort = self.point_turning_pid.compute(angle_to_point_error_rad) # Pass error directly, PID handles setpoint=0 internally
+            # PID internal error becomes negative. PID output (turn_effort) becomes negative.
+            # To make the robot turn CCW (left), motor_controller.move() expects a POSITIVE turn_component.
+            # So, we negate the turn_effort.
+            turn_effort = self.point_turning_pid.compute(angle_to_point_error_rad)
+            # logger.debug(f"ALIGNING_TO_POINT Raw TurnEffort: {turn_effort:.2f}, AngleToPtError: {math.degrees(angle_to_point_error_rad):.1f}")
+            turn_speed = self._calculate_scaled_speed(-turn_effort, self.max_turning_speed, self.min_effective_speed)
             
-            turn_speed = self._calculate_scaled_speed(turn_effort, self.max_turning_speed, self.min_effective_speed)
-            
-            logger.debug(f"Nav State 1 (AlignToPoint): AngleToPtError:{math.degrees(angle_to_point_error_rad):.1f}°, Effort:{turn_effort:.2f}, TurnSpeed:{turn_speed}")
-            if turn_speed == 0 and abs(angle_to_point_error_rad) > self.orientation_to_point_threshold_rad:
-                 # If error still exists but PID output is zero (e.g. stuck in deadband or Kp too small), force minimal turn
-                logger.debug("Nav State 1: Forcing minimal turn due to zero speed with existing error.")
-                turn_speed = int(np.sign(angle_to_point_error_rad) * self.min_effective_speed)
-
-            if turn_speed > 0:
-                self.motor_controller.turn_left(abs(turn_speed))
-            elif turn_speed < 0:
-                self.motor_controller.turn_right(abs(turn_speed))
-            else:
-                self.motor_controller.stop() # No turn needed or PID output too small
-            return True # Still navigating (turning)
+            logger.info(f"State: ALIGNING_TO_POINT. Error:{math.degrees(angle_to_point_error_rad):.1f}°, Effort(raw):{turn_effort:.2f}, ScaledSpeed:{turn_speed}")
+            self.motor_controller.move(0, turn_speed)
+            return False
 
         # --- State 2: Drive to Target Point XY ---
-        # Error for distance PID: current_distance_pixels - target_approach_distance_pixels.
-        # We want this error to be 0.
-        # If current > approach (too far), error is positive. PID (setpoint 0) gets negative input, should output positive (forward).
-        distance_error_for_pid = distance_to_target_xy_pixels - self.target_approach_distance_pixels
-
-        # Only drive if we are further than the *arrival* threshold (distance_threshold_pixels)
-        # The PID uses target_approach_distance_pixels as its conceptual setpoint via the error term.
-        if distance_to_target_xy_pixels > self.distance_threshold_pixels: # Check if we are outside the acceptable ARRIVAL distance threshold
-            # If distance_error_for_pid is positive (too far), self.xy_distance_pid.compute will use (0 - positive_error) = negative value.
-            # We want positive PID output to drive forward. So, pass negative of the error.
-            drive_effort = self.xy_distance_pid.compute(-distance_error_for_pid) 
+        # This state is reached if the robot is generally facing the target point.
+        if distance_to_target_xy_pixels > self.distance_threshold_pixels:
+            # PID for forward movement (error is positive if target is further away)
+            forward_effort = self.xy_distance_pid.compute(distance_to_target_xy_pixels) # PID setpoint is 0, error = 0 - dist = -dist
+                                                                                        # To move forward, effort should be positive if distance is positive.
+                                                                                        # Let's make PID input -distance so error = 0 - (-dist) = +dist
             
-            drive_speed = self._calculate_scaled_speed(drive_effort, self.max_forward_speed, self.min_effective_speed)
-
-            logger.debug(f"Nav State 2 (DriveToXY): DistToXY:{distance_to_target_xy_pixels:.1f}px, ApproachDist:{self.target_approach_distance_pixels:.1f}px, DistErrorPID:{distance_error_for_pid:.1f}px, Effort:{drive_effort:.2f}, DriveSpeed:{drive_speed}")
+            # Let's adjust xy_distance_pid input: setpoint is target_approach_distance_pixels, current value is distance_to_target_xy_pixels
+            # Error = setpoint - current_value. If current > setpoint, error is negative (need to move backward, or reduce speed if overshot)
+            # This PID should output positive to go forward if current_value < setpoint.
+            # For simplicity, let's keep setpoint = 0 for distance PID.
+            # error for distance PID = 0 - distance_to_target_xy_pixels.
+            # If distance is positive, error is negative. PID output (forward_effort) is negative.
+            # To move forward, motor_controller.move() needs positive forward_component. So, negate forward_effort.
             
-            if drive_speed > 0:
-                self.motor_controller.drive_forward(abs(drive_speed))
-            elif drive_speed < 0: # Overshot, or PID tuned to allow reversal
-                self.motor_controller.drive_backward(abs(drive_speed))
-            else:
-                self.motor_controller.stop()
-            return True # Still navigating (driving)
+            # Re-thinking distance PID:
+            # Setpoint is effectively self.target_approach_distance_pixels (or 0 if we want to reach exactly the point).
+            # Let's use current distance_to_target_xy_pixels as the value to reduce to 0 (or to target_approach_distance_pixels).
+            # If self.xy_distance_pid.setpoint = 0:
+            #   error = 0 - distance_to_target_xy_pixels. If distance is 100, error = -100. Output will be negative.
+            #   We need positive forward speed. So, forward_speed = _calculate_scaled_speed(-output, ...)
+            forward_speed = self._calculate_scaled_speed(-forward_effort, self.max_forward_speed, self.min_effective_speed)
+
+            # PID for course correction (maintains alignment to the point while driving)
+            # Same logic as State 1 for turning: negate effort for correct motor command.
+            correction_turn_effort = self.point_turning_pid.compute(angle_to_point_error_rad)
+            # logger.debug(f"DRIVING_TO_POINT Raw CorrTurnEffort: {correction_turn_effort:.2f}, AngleToPtError: {math.degrees(angle_to_point_error_rad):.1f}")
+            correction_turn_speed = self._calculate_scaled_speed(-correction_turn_effort, self.max_turning_speed, self.min_effective_speed)
+            
+            logger.info(f"State: DRIVING_TO_POINT. Dist:{distance_to_target_xy_pixels:.1f}px, FwdSpeed:{forward_speed}, AngleErr:{math.degrees(angle_to_point_error_rad):.1f}°, TurnSpeed:{correction_turn_speed}")
+            self.motor_controller.move(forward_speed, correction_turn_speed)
+            return False
 
         # --- State 3: Align to Final Target Orientation ---
-        final_orientation_error_rad = normalize_angle(target_theta_rad - current_theta_rad)
-        # logger.debug(f"Nav State 3 Check (FinalOrient): FinalOrientError:{math.degrees(final_orientation_error_rad):.1f}°")
-
-        if abs(final_orientation_error_rad) > self.final_orientation_threshold_rad:
-            # Similar to point turning: Positive error (target_theta is CCW from current_theta) means turn left (positive PID output)
-            final_turn_effort = self.final_orientation_pid.compute(final_orientation_error_rad)
-            final_turn_speed = self._calculate_scaled_speed(final_turn_effort, self.max_turning_speed, self.min_effective_speed)
+        # This state is reached if XY position is close enough.
+        final_angle_error_rad = normalize_angle(target_theta_rad - current_theta_rad)
+        if abs(final_angle_error_rad) > self.final_orientation_threshold_rad:
+            # PID error: setpoint (0) - current_error.
+            # Same logic as State 1 for turning: negate effort for correct motor command.
+            final_turn_effort = self.final_orientation_pid.compute(final_angle_error_rad)
+            # logger.debug(f"ALIGNING_TO_FINAL Raw TurnEffort: {final_turn_effort:.2f}, FinalAngleError: {math.degrees(final_angle_error_rad):.1f}")
+            final_turn_speed = self._calculate_scaled_speed(-final_turn_effort, self.max_turning_speed, self.min_effective_speed)
             
-            logger.debug(f"Nav State 3 (FinalOrient): Error:{math.degrees(final_orientation_error_rad):.1f}°, Effort:{final_turn_effort:.2f}, Speed:{final_turn_speed}")
-            if final_turn_speed == 0 and abs(final_orientation_error_rad) > self.final_orientation_threshold_rad:
-                logger.debug("Nav State 3: Forcing minimal turn for final orientation.")
-                final_turn_speed = int(np.sign(final_orientation_error_rad) * self.min_effective_speed)
-
-            if final_turn_speed > 0:
-                self.motor_controller.turn_left(abs(final_turn_speed))
-            elif final_turn_speed < 0:
-                self.motor_controller.turn_right(abs(final_turn_speed))
-            else:
-                self.motor_controller.stop()
-            return True # Still navigating (final turning)
+            logger.info(f"State: ALIGNING_TO_FINAL_ORIENTATION. Error:{math.degrees(final_angle_error_rad):.1f}°, Effort(raw):{final_turn_effort:.2f}, ScaledSpeed:{final_turn_speed}")
+            self.motor_controller.move(0, final_turn_speed)
+            return False
         
         # --- Target Reached (All conditions met) --- 
-        logger.info(f"NavigationController: Target Reached! XY_Dist:{distance_to_target_xy_pixels:.1f}px (Threshold:{self.distance_threshold_pixels:.1f}px), FinalAngleError:{math.degrees(final_orientation_error_rad):.1f}° (Threshold:{math.degrees(self.final_orientation_threshold_rad):.1f}°)")
+        logger.info(f"NavigationController: Target Reached! XY_Dist:{distance_to_target_xy_pixels:.1f}px (Threshold:{self.distance_threshold_pixels:.1f}px), FinalAngleError:{math.degrees(final_angle_error_rad):.1f}° (Threshold:{math.degrees(self.final_orientation_threshold_rad):.1f}°)")
         self.motor_controller.stop()
-        return False # Navigation complete
+        return True # Navigation complete
 
     def stop_navigation(self):
         self.clear_target()
