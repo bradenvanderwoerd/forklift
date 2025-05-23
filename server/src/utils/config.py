@@ -48,12 +48,42 @@ FORK_SERVO_D_PIN = 27 # Pin for Fork D (formerly SERVO_PIN_C)
 FORK_SERVO_E_PIN = 18 # Pin for Fork E (formerly SERVO_PIN_D)
 FORK_SERVO_F_PIN = 16 # Pin for Fork F (formerly SERVO_PIN_E)
 
-# --- Forklift Servo Positions ---
-FORK_DOWN_POSITION = 85      # Default down position (startup, shutdown, manual down, auto-nav pickup)
-FORK_UP_POSITION = 0        # Default up position (manual up)
-AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE = 85 # Special low position for auto-nav to get under a box (same as FORK_DOWN_POSITION)
-AUTONAV_FORK_CARRY_ANGLE = 60 # Position for carrying a box during auto-navigation
-# SERVO_ABSOLUTE_MAX_ANGLE = 80 # Physical maximum for the servo controller
+# --- Forklift Servo Positions (General) ---
+FORK_DOWN_POSITION = 85      # Default down position for forks
+FORK_UP_POSITION = 0        # Default up position for forks
+AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE = 85 
+AUTONAV_FORK_CARRY_ANGLE = 60 
+
+# --- Individual Servo Angle Configurations ---
+# For FORK_SERVO_A (Pin 13) - Primary Fork
+FORK_A_INITIAL_ANGLE = 0
+FORK_A_DOWN_ANGLE = 0
+FORK_A_UP_ANGLE = 6
+
+# For FORK_SERVO_B (Pin 25)
+FORK_B_INITIAL_ANGLE = 83
+FORK_B_DOWN_ANGLE = 83
+FORK_B_UP_ANGLE = 77
+
+# For FORK_SERVO_C (Pin 26)
+FORK_C_INITIAL_ANGLE = 6
+FORK_C_DOWN_ANGLE = 6
+FORK_C_UP_ANGLE = 12
+
+# For FORK_SERVO_D (Pin 27)
+FORK_D_INITIAL_ANGLE = 85
+FORK_D_DOWN_ANGLE = 85
+FORK_D_UP_ANGLE = 79
+
+# For FORK_SERVO_E (Pin 18)
+FORK_E_INITIAL_ANGLE = 0
+FORK_E_DOWN_ANGLE = 0
+FORK_E_UP_ANGLE = 6
+
+# For FORK_SERVO_F (Pin 16)
+FORK_F_INITIAL_ANGLE = 85
+FORK_F_DOWN_ANGLE = 85
+FORK_F_UP_ANGLE = 79
 
 # --- Control Configuration ---
 MAX_SPEED = 100      # From old config.py

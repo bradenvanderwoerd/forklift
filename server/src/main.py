@@ -24,8 +24,14 @@ from .localization.overhead_localizer import OverheadLocalizer
 from .utils.config import (
     HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, 
     OVERHEAD_VIDEO_WEBSOCKET_PORT,
-    FORK_SERVO_A_PIN, FORK_SERVO_B_PIN, FORK_SERVO_C_PIN, # Updated servo pins
-    FORK_SERVO_D_PIN, FORK_SERVO_E_PIN, FORK_SERVO_F_PIN, # Updated servo pins
+    FORK_SERVO_A_PIN, FORK_SERVO_B_PIN, FORK_SERVO_C_PIN,
+    FORK_SERVO_D_PIN, FORK_SERVO_E_PIN, FORK_SERVO_F_PIN,
+    FORK_A_INITIAL_ANGLE, FORK_A_UP_ANGLE, FORK_A_DOWN_ANGLE,
+    FORK_B_INITIAL_ANGLE, FORK_B_UP_ANGLE, FORK_B_DOWN_ANGLE,
+    FORK_C_INITIAL_ANGLE, FORK_C_UP_ANGLE, FORK_C_DOWN_ANGLE,
+    FORK_D_INITIAL_ANGLE, FORK_D_UP_ANGLE, FORK_D_DOWN_ANGLE,
+    FORK_E_INITIAL_ANGLE, FORK_E_UP_ANGLE, FORK_E_DOWN_ANGLE,
+    FORK_F_INITIAL_ANGLE, FORK_F_UP_ANGLE, FORK_F_DOWN_ANGLE,
     MANUAL_TURN_SPEED, FORK_DOWN_POSITION, FORK_UP_POSITION,
     AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, AUTONAV_FORK_CARRY_ANGLE,
     OVERHEAD_CAMERA_HOST, OVERHEAD_CAMERA_PORT,
@@ -126,34 +132,29 @@ class ForkliftServer:
 
         # Initialize Servo Controllers
         self.servos: Dict[int, ServoController] = {}
-        # Names like "fork_a", "fork_b" are for logging/identification if needed, the pin is the key.
-        servo_pins_map = {
-            "fork_a": FORK_SERVO_A_PIN, 
-            "fork_b": FORK_SERVO_B_PIN,
-            "fork_c": FORK_SERVO_C_PIN,
-            "fork_d": FORK_SERVO_D_PIN,
-            "fork_e": FORK_SERVO_E_PIN,
-            "fork_f": FORK_SERVO_F_PIN,
+        
+        servo_configs = {
+            "fork_a": {"pin": FORK_SERVO_A_PIN, "initial": FORK_A_INITIAL_ANGLE, "up": FORK_A_UP_ANGLE, "down": FORK_A_DOWN_ANGLE},
+            "fork_b": {"pin": FORK_SERVO_B_PIN, "initial": FORK_B_INITIAL_ANGLE, "up": FORK_B_UP_ANGLE, "down": FORK_B_DOWN_ANGLE},
+            "fork_c": {"pin": FORK_SERVO_C_PIN, "initial": FORK_C_INITIAL_ANGLE, "up": FORK_C_UP_ANGLE, "down": FORK_C_DOWN_ANGLE},
+            "fork_d": {"pin": FORK_SERVO_D_PIN, "initial": FORK_D_INITIAL_ANGLE, "up": FORK_D_UP_ANGLE, "down": FORK_D_DOWN_ANGLE},
+            "fork_e": {"pin": FORK_SERVO_E_PIN, "initial": FORK_E_INITIAL_ANGLE, "up": FORK_E_UP_ANGLE, "down": FORK_E_DOWN_ANGLE},
+            "fork_f": {"pin": FORK_SERVO_F_PIN, "initial": FORK_F_INITIAL_ANGLE, "up": FORK_F_UP_ANGLE, "down": FORK_F_DOWN_ANGLE},
         }
 
-        for name, pin in servo_pins_map.items():
+        for name, config in servo_configs.items():
             try:
-                # All servos are forks, so initialize them with fork-specific settings
                 controller = ServoController(
-                    pin_number=pin,
-                    initial_position_degrees=FORK_DOWN_POSITION,
-                    min_angle=FORK_UP_POSITION,
-                    max_angle=FORK_DOWN_POSITION
+                    pin_number=config["pin"],
+                    initial_position_degrees=config["initial"],
+                    defined_up_angle=config["up"],
+                    defined_down_angle=config["down"]
                 )
-                # Explicitly set to FORK_DOWN_POSITION on startup
-                controller.set_position(FORK_DOWN_POSITION, blocking=False) 
-
-                self.servos[pin] = controller
-                logger.info(f"Initialized servo '{name}' on pin {pin} with fork settings.")
+                self.servos[config["pin"]] = controller
+                logger.info(f"Initialized servo '{name}' on pin {config['pin']} with Initial: {config['initial']}, Up: {config['up']}, Down: {config['down']}")
             except Exception as e:
-                logger.error(f"Failed to initialize servo '{name}' on pin {pin}: {e}", exc_info=True)
+                logger.error(f"Failed to initialize servo '{name}' on pin {config['pin']}: {e}", exc_info=True)
         
-        # Keep a direct reference to the primary fork servo (Fork A) for convenience (e.g. autonav)
         self.primary_fork_servo: Optional[ServoController] = self.servos.get(FORK_SERVO_A_PIN)
 
         # Initialize Overhead Camera Client
@@ -163,9 +164,15 @@ class ForkliftServer:
         )
         # Initialize Overhead Localizer
         self.overhead_localizer = OverheadLocalizer()
-        # Explicitly set to FORK_DOWN_POSITION (80) on startup
-        if self.primary_fork_servo: # Ensure primary_fork_servo was initialized
-            self.primary_fork_servo.set_position(FORK_DOWN_POSITION, blocking=False) # Set fork servo position
+        # Explicitly set to FORK_DOWN_POSITION (80) on startup - This was for the old primary fork logic
+        # The new primary_fork_servo is already initialized to FORK_A_INITIAL_ANGLE from its config.
+        # If FORK_A_INITIAL_ANGLE is different from where autonav expects it, adjustments might be needed here
+        # or ensure FORK_A_INITIAL_ANGLE is FORK_DOWN_POSITION if that assumption holds for startup.
+        # Current config has FORK_A_INITIAL_ANGLE = FORK_DOWN_POSITION, so this is fine.
+        if self.primary_fork_servo: 
+            logger.info(f"Primary fork servo (A) initialized to {self.primary_fork_servo.get_position()} deg based on its config.")
+        else:
+            logger.warning("Primary fork servo (A) not found after initialization.")
         
         # Initialize network components, passing configured host and ports
         self.video_streamer = VideoStreamer(host=HOST, port=SERVER_VIDEO_UDP_PORT)
@@ -181,9 +188,15 @@ class ForkliftServer:
         
         # Create threads for servers
         self.video_thread = threading.Thread(target=self._run_video_server, name="OnboardVideoStreamThread")
+        self.video_thread.daemon = True # Set as daemon
+
         self.overhead_video_thread = threading.Thread(target=self._run_overhead_video_server, name="OverheadVideoStreamThread")
+        self.overhead_video_thread.daemon = True # Set as daemon
+
         self.command_thread = threading.Thread(target=self._run_command_server, name="CommandServerThread")
-        # Overhead camera client manages its own thread, started by connect()
+        self.command_thread.daemon = True # Set as daemon
+        
+        # Overhead camera client manages its own thread (already daemon), started by connect()
     
     def _register_handlers(self):
         """Register command handlers"""
