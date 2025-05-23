@@ -98,7 +98,7 @@ class DirectWarehouseFeedReceiver:
                 current_time = time.time()
                 
                 if current_time - last_video_request_time >= video_request_interval_seconds:
-                    command_to_send_g1 = b"G 1\n" # Ensure newline
+                    command_to_send_g1 = b"G 1" # Removed newline
                     
                     try:
                         self.socket.sendall(command_to_send_g1)
@@ -111,11 +111,14 @@ class DirectWarehouseFeedReceiver:
                     image_receive_start_time = time.time()
                     RECV_BUFFER_SIZE = 8192
                     MAX_IMAGE_BYTES = 5 * 1024 * 1024 
-                    FRAME_RECEIVE_TIMEOUT = self.socket.gettimeout() * 2.5 # e.g., 5 seconds for a frame
+                    # Timeout for receiving a single frame
+                    frame_receive_start_time = time.time()
+                    # Socket timeout is 2s. Make frame timeout less than join() timeout (3s).
+                    FRAME_TIMEOUT_SECONDS = self.socket.gettimeout() * 1.2 # e.g., 2.0s * 1.2 = 2.4s
 
                     try:
                         while True: # Inner loop for reading one frame data
-                            if time.time() - image_receive_start_time > FRAME_RECEIVE_TIMEOUT:
+                            if time.time() - image_receive_start_time > FRAME_TIMEOUT_SECONDS:
                                 logger.warning(f"DirectWarehouseFeedReceiver: Timeout receiving image. Received {len(frame_data)} bytes.")
                                 self._handle_connection_error() 
                                 raise socket.timeout("Image receive overall timeout")
