@@ -99,6 +99,7 @@ class NavigationController:
         self.distance_threshold_pixels = config.OVERHEAD_NAV_DISTANCE_THRESHOLD_PIXELS
         self.orientation_to_point_threshold_rad = config.OVERHEAD_NAV_ORIENTATION_THRESHOLD_RAD
         self.final_orientation_threshold_rad = config.OVERHEAD_NAV_FINAL_ANGULAR_THRESHOLD_RAD
+        self.pid_output_limits = (-100, 100) # Standard PID output limits, actual speed uses min/max config
 
         # Speed limits (these are absolute PWM values 0-100)
         self.max_turning_speed = config.NAV_MAX_TURNING_SPEED 
@@ -136,46 +137,40 @@ class NavigationController:
         self.xy_distance_pid.reset()
         self.final_orientation_pid.reset()
 
-    def _calculate_scaled_speed(self, effort: float, max_speed_limit: int, min_speed_limit: int) -> int:
-        """Scales PID effort to motor speed, clamping and ensuring minimum effective speed.
-        
-        Args:
-            effort: Raw output from PID controller. Can be positive or negative.
-            max_speed_limit: The absolute maximum speed (e.g., 100).
-            min_speed_limit: The minimum speed at which motors should run effectively (e.g., 75).
-        Returns:
-            Scaled motor command speed, including direction (positive/negative).
-        """
-        
-        # Determine direction from effort
+    def _calculate_scaled_speed(self, effort: float, max_speed_limit: int, min_speed_limit: int, context: str = "-") -> int:
+        """Scales PID effort to a motor speed, applying min/max limits."""
+        # Detailed logging for debugging PID scaling
+        # if context == "turn_to_point" or context == "turn_final_orient": # Log only for turning for now to reduce noise
+        logger.debug(f"_calc_speed ({context}): InEffort={effort:.2f}, MaxLim={max_speed_limit}, MinLim={min_speed_limit}")
+
         direction = np.sign(effort)
         abs_effort = abs(effort)
 
-        # At this point, Kp for PIDs need to be tuned such that `abs_effort` is somewhat
-        # in a range that can be mapped to speeds. Let's assume Kp are tuned so `abs_effort` 
-        # could be, for example, 0-100 or more.
-        
         # Clamp the magnitude of the effort to the max_speed_limit (e.g. 0-100)
-        # This acts as a primary governor on the PID output if Kp values are large.
         scaled_speed_magnitude = min(abs_effort, float(max_speed_limit))
+        # if context == "turn_to_point" or context == "turn_final_orient":
+        logger.debug(f"_calc_speed ({context}): AbsEff={abs_effort:.2f}, ScaledMag={scaled_speed_magnitude:.2f} (after min(abs_effort, max_limit))")
 
         if scaled_speed_magnitude < 0.1: # If scaled effort is too small, consider it zero speed
+            # if context == "turn_to_point" or context == "turn_final_orient":
+            logger.debug(f"_calc_speed ({context}): ScaledMag < 0.1, returning 0")
             return 0
         
         # If there is some effort, ensure the speed is at least min_speed_limit,
         # but not exceeding max_speed_limit.
-        # This maps the PID output to the [min_speed_limit, max_speed_limit] operational range.
-        # Example: if min_speed_limit=75, max_speed_limit=100:
-        #   A small PID output (but >0.1) will result in 75.
-        #   A large PID output will result in 100.
-        #   An intermediate PID output (e.g. if scaled_speed_magnitude was 80) would remain 80.
-        
-        # This logic ensures that if any movement is intended, it's at least min_speed_limit.
-        # And it also respects the max_speed_limit.
         final_speed_magnitude = max(float(min_speed_limit), scaled_speed_magnitude)
-        final_speed_magnitude = min(final_speed_magnitude, float(max_speed_limit)) # Redundant if scaled_speed_magnitude was already capped, but safe.
+        # if context == "turn_to_point" or context == "turn_final_orient":
+        logger.debug(f"_calc_speed ({context}): FinalMag={final_speed_magnitude:.2f} (after max(min_limit, scaled_mag))")
+
+        # Redundant if scaled_speed_magnitude was already capped by max_speed_limit, but safe.
+        final_speed_magnitude = min(final_speed_magnitude, float(max_speed_limit)) 
+        # if context == "turn_to_point" or context == "turn_final_orient":
+        logger.debug(f"_calc_speed ({context}): FinalMag={final_speed_magnitude:.2f} (after min(final_mag, max_limit))")
             
-        return int(direction * final_speed_magnitude)
+        result_speed = int(direction * final_speed_magnitude)
+        # if context == "turn_to_point" or context == "turn_final_orient":
+        logger.debug(f"_calc_speed ({context}): Returning speed: {result_speed}")
+        return result_speed
 
     def navigate(self, current_pixel_pose: Tuple[float, float, float]) -> bool:
         if not self.current_target_pixel_pose or current_pixel_pose is None:
@@ -197,17 +192,13 @@ class NavigationController:
 
         # --- State 1: Align to Target Point XY ---
         if abs(angle_to_point_error_rad) > self.orientation_to_point_threshold_rad:
-            # PID error: setpoint (0) - current_error. If angle_to_point_error_rad is positive (target is CCW from robot heading),
-            # PID internal error becomes negative. PID output (turn_effort) becomes negative.
-            # To make the robot turn CCW (left), motor_controller.move() expects a POSITIVE turn_component.
-            # So, we negate the turn_effort.
-            turn_effort = self.point_turning_pid.compute(angle_to_point_error_rad)
-            # logger.debug(f"ALIGNING_TO_POINT Raw TurnEffort: {turn_effort:.2f}, AngleToPtError: {math.degrees(angle_to_point_error_rad):.1f}")
-            turn_speed = self._calculate_scaled_speed(-turn_effort, self.max_turning_speed, self.min_effective_speed)
-            
-            logger.info(f"State: ALIGNING_TO_POINT. Error:{math.degrees(angle_to_point_error_rad):.1f}°, Effort(raw):{turn_effort:.2f}, ScaledSpeed:{turn_speed}")
-            self.motor_controller.move(0, turn_speed)
-            return False
+            # PID error: setpoint (0) - current_error. If angle_to_point_error_rad is positive (robot is CCW, needs to turn CW), effort will be negative.
+            self.point_turning_pid.setpoint = 0 
+            turn_effort = self.point_turning_pid.compute(angle_to_point_error_rad) 
+            turn_speed = self._calculate_scaled_speed(-turn_effort, self.max_turning_speed, self.min_effective_speed, context="turn_to_point")
+            self.motor_controller.move(forward_component=0, turn_component=turn_speed)
+            logger.info(f"State: ALIGNING_TO_POINT. ErrRad:{angle_to_point_error_rad:.2f} (Deg:{math.degrees(angle_to_point_error_rad):.1f}), Effort(raw):{turn_effort:.2f}, ScaledSpeed:{turn_speed}")
+            return False # Still aligning
 
         # --- State 2: Drive to Target Point XY ---
         # This state is reached if the robot is generally facing the target point.
@@ -233,14 +224,15 @@ class NavigationController:
             #   We need positive forward speed. So, forward_speed = _calculate_scaled_speed(-output, ...)
             forward_speed = self._calculate_scaled_speed(-forward_effort, self.max_forward_speed, self.min_effective_speed)
 
-            # PID for course correction (maintains alignment to the point while driving)
-            # Same logic as State 1 for turning: negate effort for correct motor command.
+            # Corrective turning to face the target point (if needed while moving forward)
+            self.point_turning_pid.setpoint = 0
             correction_turn_effort = self.point_turning_pid.compute(angle_to_point_error_rad)
-            # logger.debug(f"DRIVING_TO_POINT Raw CorrTurnEffort: {correction_turn_effort:.2f}, AngleToPtError: {math.degrees(angle_to_point_error_rad):.1f}")
-            correction_turn_speed = self._calculate_scaled_speed(-correction_turn_effort, self.max_turning_speed, self.min_effective_speed)
-            
-            logger.info(f"State: DRIVING_TO_POINT. Dist:{distance_to_target_xy_pixels:.1f}px, FwdSpeed:{forward_speed}, AngleErr:{math.degrees(angle_to_point_error_rad):.1f}°, TurnSpeed:{correction_turn_speed}")
-            self.motor_controller.move(forward_speed, correction_turn_speed)
+            # Use a slightly lower max speed for corrective turning, and potentially higher min if it's too sluggish.
+            # For now, use same limits. Negate effort for motor controller.
+            correction_turn_speed = self._calculate_scaled_speed(-correction_turn_effort, self.max_turning_speed, self.min_effective_speed, context="turn_corrective")
+
+            self.motor_controller.move(forward_component=forward_speed, turn_component=correction_turn_speed)
+            logger.info(f"State: DRIVING_TO_XY. Dist:{distance_to_target_xy_pixels:.1f}px, FwdEffort:{forward_effort:.2f}, FwdSpeed:{forward_speed}. AngleErr:{math.degrees(angle_to_point_error_rad):.1f}°, TurnEffort:{correction_turn_effort:.2f}, TurnSpeed:{correction_turn_speed}")
             return False
 
         # --- State 3: Align to Final Target Orientation ---
@@ -248,14 +240,12 @@ class NavigationController:
         final_angle_error_rad = normalize_angle(target_theta_rad - current_theta_rad)
         if abs(final_angle_error_rad) > self.final_orientation_threshold_rad:
             # PID error: setpoint (0) - current_error.
-            # Same logic as State 1 for turning: negate effort for correct motor command.
+            self.final_orientation_pid.setpoint = 0
             final_turn_effort = self.final_orientation_pid.compute(final_angle_error_rad)
-            # logger.debug(f"ALIGNING_TO_FINAL Raw TurnEffort: {final_turn_effort:.2f}, FinalAngleError: {math.degrees(final_angle_error_rad):.1f}")
-            final_turn_speed = self._calculate_scaled_speed(-final_turn_effort, self.max_turning_speed, self.min_effective_speed)
-            
-            logger.info(f"State: ALIGNING_TO_FINAL_ORIENTATION. Error:{math.degrees(final_angle_error_rad):.1f}°, Effort(raw):{final_turn_effort:.2f}, ScaledSpeed:{final_turn_speed}")
-            self.motor_controller.move(0, final_turn_speed)
-            return False
+            final_turn_speed = self._calculate_scaled_speed(-final_turn_effort, self.max_turning_speed, self.min_effective_speed, context="turn_final_orient")
+            self.motor_controller.move(forward_component=0, turn_component=final_turn_speed)
+            logger.info(f"State: FINAL_ALIGNMENT. TargetAngle:{math.degrees(target_theta_rad):.1f}°, CurrentAngle:{math.degrees(current_theta_rad):.1f}°, FinalAngleError:{math.degrees(final_angle_error_rad):.1f}°, Effort:{final_turn_effort:.2f}, ScaledSpeed:{final_turn_speed}")
+            return False # Still aligning
         
         # --- Target Reached (All conditions met) --- 
         logger.info(f"NavigationController: Target Reached! XY_Dist:{distance_to_target_xy_pixels:.1f}px (Threshold:{self.distance_threshold_pixels:.1f}px), FinalAngleError:{math.degrees(final_angle_error_rad):.1f}° (Threshold:{math.degrees(self.final_orientation_threshold_rad):.1f}°)")

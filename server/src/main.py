@@ -574,68 +574,94 @@ class ForkliftServer:
     def cleanup(self):
         """Clean up resources"""
         with self.cleanup_lock:
-            if not self.running:
-                self.cleanup_complete.set() # Already cleaned up or in progress
+            if self.is_cleanup_complete(): # Use a method to check the event
+                logger.info("Cleanup already completed or in progress by another call.")
+                return
+            
+            if not self.running: # Check if main loop was ever running
+                logger.info("Main loop was not active, minimal cleanup needed.")
+                self.cleanup_complete.set()
                 return
 
             logger.info("Initiating server shutdown sequence...")
-            self.running = False # Signal all threads to stop
+            self.running = False # Signal main loop to stop, if it hasn't already from _handle_shutdown
 
-            # Stop network components first
-            if hasattr(self, 'command_server'):
-                logger.info("Stopping Command Server...")
+            # Stop network components first by signaling their internal stop events
+            if hasattr(self, 'command_server') and self.command_server:
+                logger.info("Signaling Command Server to stop...")
                 self.command_server.stop()
-            if hasattr(self, 'video_streamer'):
-                logger.info("Stopping Onboard Video Streamer...")
-                self.video_streamer.stop_stream()
-            if hasattr(self, 'overhead_video_streamer'):
-                logger.info("Stopping Overhead Video Streamer...")
+            if hasattr(self, 'video_streamer') and self.video_streamer:
+                logger.info("Signaling Onboard Video Streamer to stop...")
+                self.video_streamer.stop() # Corrected method name
+            if hasattr(self, 'overhead_video_streamer') and self.overhead_video_streamer:
+                logger.info("Signaling Overhead Video Streamer to stop...")
                 self.overhead_video_streamer.stop()
-            if hasattr(self, 'overhead_camera_client'):
+            
+            # Disconnect blocking clients like the overhead camera client
+            if hasattr(self, 'overhead_camera_client') and self.overhead_camera_client:
                 logger.info("Disconnecting Overhead Camera Client...")
-                self.overhead_camera_client.disconnect()
+                self.overhead_camera_client.disconnect() # This is blocking
 
             # Join threads (ensure they have a chance to exit cleanly)
-            # Give threads a timeout to join
-            timeout_seconds = 2.0 
+            timeout_seconds = 3.0 # Slightly increased timeout
+            threads_to_join = []
             if hasattr(self, 'command_thread') and self.command_thread.is_alive():
-                logger.info("Waiting for Command Server thread to join...")
-                self.command_thread.join(timeout=timeout_seconds)
+                threads_to_join.append(("Command Server", self.command_thread))
             if hasattr(self, 'video_thread') and self.video_thread.is_alive():
-                logger.info("Waiting for Onboard Video Streamer thread to join...")
-                self.video_thread.join(timeout=timeout_seconds)
+                threads_to_join.append(("Onboard Video Streamer", self.video_thread))
             if hasattr(self, 'overhead_video_thread') and self.overhead_video_thread.is_alive():
-                logger.info("Waiting for Overhead Video Streamer thread to join...")
-                self.overhead_video_thread.join(timeout=timeout_seconds)
-            # Overhead camera client thread is managed internally by its connect/disconnect
+                threads_to_join.append(("Overhead Video Streamer", self.overhead_video_thread))
 
-            if hasattr(self, 'navigation_controller'):
-                logger.info("Stopping Navigation Controller...")
-                self.navigation_controller.clear_target() # Also stops motors
+            for name, thread_obj in threads_to_join:
+                logger.info(f"Waiting for {name} thread to join...")
+                thread_obj.join(timeout=timeout_seconds)
+                if thread_obj.is_alive():
+                    logger.warning(f"{name} thread did not join within timeout.")
+                else:
+                    logger.info(f"{name} thread joined successfully.")
 
-            # Cleanup hardware controllers
-            if hasattr(self, 'motor_controller'):
+            # After threads are joined, call their explicit cleanup methods
+            if hasattr(self, 'command_server') and self.command_server:
+                logger.info("Cleaning up Command Server resources...")
+                self.command_server.cleanup()
+            if hasattr(self, 'video_streamer') and self.video_streamer:
+                logger.info("Cleaning up Onboard Video Streamer resources...")
+                self.video_streamer.cleanup()
+            if hasattr(self, 'overhead_video_streamer') and self.overhead_video_streamer:
+                logger.info("Cleaning up Overhead Video Streamer resources...")
+                self.overhead_video_streamer.cleanup()
+            # overhead_camera_client has disconnect(), no separate cleanup usually
+
+            if hasattr(self, 'navigation_controller') and self.navigation_controller:
+                logger.info("Clearing target and stopping motors via Navigation Controller...")
+                self.navigation_controller.clear_target() # This should also stop motors
+
+            # Cleanup hardware controllers (motors, servos)
+            if hasattr(self, 'motor_controller') and self.motor_controller:
                 logger.info("Cleaning up Motor Controller...")
                 self.motor_controller.cleanup()
             
-            # Cleanup all servo controllers
             if hasattr(self, 'servos'):
                 logger.info("Cleaning up Servo Controllers...")
                 for pin, servo_controller_instance in self.servos.items():
-                    try:
-                        logger.info(f"Cleaning up servo on pin {pin}...")
-                        servo_controller_instance.cleanup()
-                    except Exception as e:
-                        logger.error(f"Error cleaning up servo on pin {pin}: {e}", exc_info=True)
+                    if servo_controller_instance:
+                        try:
+                            logger.info(f"Cleaning up servo on pin {pin}...")
+                            servo_controller_instance.cleanup()
+                        except Exception as e:
+                            logger.error(f"Error cleaning up servo on pin {pin}: {e}", exc_info=True)
             
-            logger.info("GPIO cleanup...")
+            logger.info("Performing final GPIO cleanup...")
             try:
-                GPIO.cleanup() # General GPIO cleanup
-            except Exception as e:
-                logger.error(f"Error during general GPIO.cleanup(): {e}", exc_info=True)
+                GPIO.cleanup() # General GPIO cleanup as a last step
+            except Exception as e: # Catch if RPi.GPIO is not used or already cleaned.
+                logger.warning(f"Warning/Error during general GPIO.cleanup(): {e}")
 
-            logger.info("ForkliftServer cleanup complete.")
+            logger.info("ForkliftServer cleanup sequence complete.")
             self.cleanup_complete.set() # Signal that cleanup is done
+            
+    def is_cleanup_complete(self): # Helper method to check event
+        return self.cleanup_complete.is_set()
 
     def _load_overhead_target_poses(self):
         try:
