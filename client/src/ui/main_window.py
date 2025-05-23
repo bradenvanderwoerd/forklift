@@ -7,7 +7,12 @@ import cv2
 import numpy as np
 from src.network.client import RobotClient
 import logging
-from typing import Optional
+from typing import Optional, Dict
+
+# Import client-side config for servo pins
+from src.utils.config import (FORK_SERVO_A_PIN, FORK_SERVO_B_PIN, FORK_SERVO_C_PIN,
+                              FORK_SERVO_D_PIN, FORK_SERVO_E_PIN, FORK_SERVO_F_PIN,
+                              SERVO_KEY_TO_PIN_MAPPING, UI_SERVO_ORDER_MAPPING)
 
 logger = logging.getLogger(__name__)
 
@@ -57,12 +62,13 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Forklift Control - Dual View")
-        self.setMinimumSize(1200, 700) # Adjusted for two feeds + controls
-        # self.resize(1200, 700) # Let minimum size dictate initial or use layout policy
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus) # Set focus policy for the main window
-        self.setFocus() # Try to grab focus initially
+        self.setMinimumSize(1350, 700) # Adjusted for two feeds + controls + servo grid
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setFocus()
         
         self.robot_client = RobotClient()
+        self.selected_servo_pin = FORK_SERVO_A_PIN # Default to Fork A (pin 13)
+        self.servo_key_displays: Dict[int, KeyDisplay] = {} # To store pin -> KeyDisplay mapping for servo grid
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -129,7 +135,39 @@ class MainWindow(QMainWindow):
         wasd_layout.addWidget(self.down_arrow_key, 1, 3)
         key_grid_widget = QWidget()
         key_grid_widget.setLayout(wasd_layout)
-        control_layout.addWidget(key_grid_widget) # Directly add, can adjust stretch later if needed
+        control_layout.addWidget(key_grid_widget)
+
+        # Servo Selection Grid (middle-center)
+        servo_selection_group = QGroupBox("Selected Servo (1-6)")
+        servo_grid_layout = QGridLayout(servo_selection_group)
+        
+        # Create KeyDisplay widgets for servos 1-6 and map them
+        # Grid:  5 6
+        #        3 4
+        #        1 2
+        # Pins: E F
+        #       C D
+        #       A B
+        key_to_servo_display_text = {
+            FORK_SERVO_E_PIN: "5", FORK_SERVO_F_PIN: "6",
+            FORK_SERVO_C_PIN: "3", FORK_SERVO_D_PIN: "4",
+            FORK_SERVO_A_PIN: "1", FORK_SERVO_B_PIN: "2",
+        }
+
+        positions = {
+            FORK_SERVO_E_PIN: (0, 0), FORK_SERVO_F_PIN: (0, 1), # Top row (5, 6)
+            FORK_SERVO_C_PIN: (1, 0), FORK_SERVO_D_PIN: (1, 1), # Middle row (3, 4)
+            FORK_SERVO_A_PIN: (2, 0), FORK_SERVO_B_PIN: (2, 1), # Bottom row (1, 2)
+        }
+
+        for pin, text_label in key_to_servo_display_text.items():
+            display = KeyDisplay(text_label)
+            self.servo_key_displays[pin] = display
+            row, col = positions[pin]
+            servo_grid_layout.addWidget(display, row, col)
+
+        control_layout.addWidget(servo_selection_group)
+        self._update_servo_selection_display() # Initial highlight
 
         # Control buttons (Connect, AutoNav, E-Stop) (middle-right)
         action_buttons_layout = QVBoxLayout()
@@ -192,24 +230,67 @@ class MainWindow(QMainWindow):
         self.is_connected = False
         self.on_speed_change(self.speed_slider.value()) # Initialize current_speed correctly
         self.is_autonav_active = False
+        self._update_servo_selection_display() # Initial update
         
+    def _update_servo_selection_display(self):
+        """Highlights the currently selected servo in the UI grid."""
+        for pin, display in self.servo_key_displays.items():
+            display.set_active(pin == self.selected_servo_pin)
+
     def keyPressEvent(self, event: QKeyEvent):
         if not self.is_connected: return
         key = event.key()
+        key_char = event.text() # Get character for number keys
+
+        # Servo Selection Keys (1-6)
+        if key_char in SERVO_KEY_TO_PIN_MAPPING:
+            self.selected_servo_pin = SERVO_KEY_TO_PIN_MAPPING[key_char]
+            self._update_servo_selection_display()
+            logger.info(f"Selected servo pin: {self.selected_servo_pin} (Key: {key_char})")
+            self.setFocus() # Return focus to main window to ensure other keys work
+            return # Consume event
+
         if key == Qt.Key.Key_Space: self.space_key.set_active(True); self.emergency_stop(); return
         if self.is_autonav_active: return
+
+        # Servo (Fork) Control with Up/Down Arrows for the SELECTED servo
+        if key == Qt.Key.Key_Up:
+            self.up_arrow_key.set_active(True)
+            logger.info(f"Sending SERVO UP command for pin {self.selected_servo_pin}")
+            self.robot_client.send_command('servo', {'pin': self.selected_servo_pin, 'step_up': True})
+            return
+        elif key == Qt.Key.Key_Down:
+            self.down_arrow_key.set_active(True)
+            logger.info(f"Sending SERVO DOWN command for pin {self.selected_servo_pin}")
+            self.robot_client.send_command('servo', {'pin': self.selected_servo_pin, 'step_down': True})
+            return
+
+        # WASD Drive Controls
         if key == Qt.Key.Key_W: self.w_key.set_active(True); self.robot_client.send_command("drive", {"direction": "FORWARD", "speed": self.current_speed})
         elif key == Qt.Key.Key_A: self.a_key.set_active(True); self.robot_client.send_command("drive", {"direction": "LEFT", "speed": self.current_speed})
         elif key == Qt.Key.Key_S: self.s_key.set_active(True); self.robot_client.send_command("drive", {"direction": "BACKWARD", "speed": self.current_speed})
         elif key == Qt.Key.Key_D: self.d_key.set_active(True); self.robot_client.send_command("drive", {"direction": "RIGHT", "speed": self.current_speed})
-        elif key == Qt.Key.Key_Up: self.up_arrow_key.set_active(True); self.robot_client.send_command("servo", {"step_down": True})
-        elif key == Qt.Key.Key_Down: self.down_arrow_key.set_active(True); self.robot_client.send_command("servo", {"step_up": True})
             
     def keyReleaseEvent(self, event: QKeyEvent):
+        if not self.is_connected or self.is_autonav_active: return
         key = event.key()
-        active_map = {Qt.Key.Key_W: self.w_key, Qt.Key.Key_A: self.a_key, Qt.Key.Key_S: self.s_key, Qt.Key.Key_D: self.d_key,
-                        Qt.Key.Key_Space: self.space_key, Qt.Key.Key_Up: self.up_arrow_key, Qt.Key.Key_Down: self.down_arrow_key}
-        if key in active_map: active_map[key].set_active(False)
+
+        # Servo (Fork) Control Release
+        if key == Qt.Key.Key_Up:
+            self.up_arrow_key.set_active(False)
+            # Optionally send a "servo stop" or rely on server for step behavior
+            return
+        elif key == Qt.Key.Key_Down:
+            self.down_arrow_key.set_active(False)
+            # Optionally send a "servo stop" or rely on server for step behavior
+            return
+
+        # WASD Release
+        if key == Qt.Key.Key_W: self.w_key.set_active(False)
+        elif key == Qt.Key.Key_A: self.a_key.set_active(False)
+        elif key == Qt.Key.Key_S: self.s_key.set_active(False)
+        elif key == Qt.Key.Key_D: self.d_key.set_active(False)
+        elif key == Qt.Key.Key_Space: self.space_key.set_active(False)
             
     def toggle_connection(self):
         if not self.is_connected:
