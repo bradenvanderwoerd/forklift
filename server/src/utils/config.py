@@ -11,8 +11,8 @@ SERVER_TCP_PORT = int(os.getenv("COMMAND_PORT", "3456"))
 SERVER_VIDEO_UDP_PORT = int(os.getenv("VIDEO_PORT", "3457"))
 
 # --- Video Stream Configuration ---
-VIDEO_WIDTH = 640  # From old config.py
-VIDEO_HEIGHT = 480 # From old config.py
+VIDEO_WIDTH = 1280  # From old config.py
+VIDEO_HEIGHT = 720 # From old config.py
 VIDEO_FPS = 30     # From old config.py
 
 # --- ArUco Marker Configuration ---

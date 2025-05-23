@@ -120,10 +120,23 @@ class VideoStreamer:
             # Initialize the camera using picamera2
             self.camera = Picamera2()
             
-            # Configure the camera using dimensions from config
+            # Define the full sensor area for ScalerCrop (assuming a V2 camera, 3280x2464)
+            # This tells the camera to use the full sensor and then scale to the main/lores size.
+            # If you have a different camera (V1, V3, HQ), these max values might differ.
+            # For a Raspberry Pi Camera Module v2, max resolution is 3280x2464.
+            # For Camera Module v3, it's 4608x2592.
+            # Using V2's max resolution as a common default.
+            # If you know your exact camera, update these:
+            full_sensor_width = 3280 
+            full_sensor_height = 2464
+
+            logger.info(f"Attempting to set ScalerCrop to (0, 0, {full_sensor_width}, {full_sensor_height}) to maximize FoV.")
+            logger.info(f"Output resolution will be {config.VIDEO_WIDTH}x{config.VIDEO_HEIGHT}.")
+
             camera_config = self.camera.create_video_configuration(
                 main={"size": (config.VIDEO_WIDTH, config.VIDEO_HEIGHT), "format": "RGB888"},
-                lores={"size": (config.VIDEO_WIDTH, config.VIDEO_HEIGHT), "format": "YUV420"} # Keep lores same for simplicity or adjust if needed
+                lores={"size": (config.VIDEO_WIDTH, config.VIDEO_HEIGHT), "format": "YUV420"}, # Keep lores same for simplicity or adjust if needed
+                controls={"ScalerCrop": (0, 0, full_sensor_width, full_sensor_height)}
             )
             self.camera.configure(camera_config)
             
