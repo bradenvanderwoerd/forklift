@@ -97,7 +97,7 @@ LOG_BACKUP_COUNT = 3  # Number of backup log files to keep
 
 # --- Navigation Controller Configuration (Overhead Pixel Space) ---
 OVERHEAD_NAV_TARGET_APPROACH_DISTANCE_PIXELS = 10.0 # Target distance (pixels) to stop from the target X,Y
-OVERHEAD_NAV_DISTANCE_THRESHOLD_PIXELS = 5.0    # Allowed error in pixel distance to consider target X,Y reached
+OVERHEAD_NAV_DISTANCE_THRESHOLD_PIXELS = 25.0    # Allowed error in pixel distance to consider target X,Y reached
 OVERHEAD_NAV_ORIENTATION_THRESHOLD_RAD = 0.1    # Allowed angular error for aligning to target *point* (radians, ~5.7 deg)
 OVERHEAD_NAV_FINAL_ANGULAR_THRESHOLD_RAD = 0.05 # Allowed angular error for final *target orientation* (radians, ~2.8 deg)
 
