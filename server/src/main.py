@@ -490,9 +490,10 @@ class ForkliftServer:
                     if self.autonav_stage == AUTONAV_STAGE_NAVIGATING:
                         if current_overhead_pose_from_server and self.navigation_controller.current_target_pixel_pose:
                             # Target is already set in NavController when autonav was enabled
-                            nav_still_moving = self.navigation_controller.navigate(current_overhead_pose_from_server)
+                            # navigate() returns True if target is reached, False otherwise.
+                            is_target_reached = self.navigation_controller.navigate(current_overhead_pose_from_server)
 
-                            if not nav_still_moving: # Target reached according to NavigationController
+                            if is_target_reached: # Target reached according to NavigationController
                                 logger.info("AutoNav (NAVIGATING): Target Reached! Transitioning to LOWERING_FORKS.")
                                 # NavigationController should have already stopped motors.
                                 # self.navigation_controller.clear_target() # Clear NavController's internal target for safety / next run.
