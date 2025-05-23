@@ -41,7 +41,12 @@ MOTOR_RIGHT_BACKWARD_PIN = 23
 MOTOR_RIGHT_PWM_PIN = 24
 
 # Servo Control
-SERVO_PWM_PIN = 13
+FORK_SERVO_A_PIN = 13 # Pin for Fork A (formerly SERVO_PIN_FORK, primary for autonav/default)
+FORK_SERVO_B_PIN = 25 # Pin for Fork B (formerly SERVO_PIN_A)
+FORK_SERVO_C_PIN = 26 # Pin for Fork C (formerly SERVO_PIN_B)
+FORK_SERVO_D_PIN = 27 # Pin for Fork D (formerly SERVO_PIN_C)
+FORK_SERVO_E_PIN = 18 # Pin for Fork E (formerly SERVO_PIN_D)
+FORK_SERVO_F_PIN = 16 # Pin for Fork F (formerly SERVO_PIN_E)
 
 # --- Forklift Servo Positions ---
 FORK_DOWN_POSITION = 85      # Default down position (startup, shutdown, manual down, auto-nav pickup)
@@ -67,14 +72,14 @@ OVERHEAD_NAV_ORIENTATION_THRESHOLD_RAD = 0.1    # Allowed angular error for alig
 OVERHEAD_NAV_FINAL_ANGULAR_THRESHOLD_RAD = 0.05 # Allowed angular error for final *target orientation* (radians, ~2.8 deg)
 
 # PID Gains for Turning to face the target point
-OVERHEAD_NAV_TURNING_PID_KP = 0.8
-OVERHEAD_NAV_TURNING_PID_KI = 0.05
-OVERHEAD_NAV_TURNING_PID_KD = 0.2
+OVERHEAD_NAV_TURNING_PID_KP = 0.001
+OVERHEAD_NAV_TURNING_PID_KI = 0
+OVERHEAD_NAV_TURNING_PID_KD = 0.05
 
 # PID Gains for Distance to the target point (pixels)
-OVERHEAD_NAV_DISTANCE_PID_KP = 0.5  # Proportional gain for pixel distance PID
-OVERHEAD_NAV_DISTANCE_PID_KI = 0.02 # Integral gain for pixel distance PID
-OVERHEAD_NAV_DISTANCE_PID_KD = 0.1  # Derivative gain for pixel distance PID
+OVERHEAD_NAV_DISTANCE_PID_KP = 0.1  # Proportional gain for pixel distance PID
+OVERHEAD_NAV_DISTANCE_PID_KI = 0 # Integral gain for pixel distance PID
+OVERHEAD_NAV_DISTANCE_PID_KD = 0.2  # Derivative gain for pixel distance PID
 
 # PID Gains for achieving the Final Target Orientation (after X,Y is reached)
 OVERHEAD_NAV_FINAL_ORIENTATION_PID_KP = 0.7

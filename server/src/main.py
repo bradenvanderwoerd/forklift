@@ -24,7 +24,9 @@ from .localization.overhead_localizer import OverheadLocalizer
 from .utils.config import (
     HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, 
     OVERHEAD_VIDEO_WEBSOCKET_PORT,
-    SERVO_PWM_PIN, MANUAL_TURN_SPEED, FORK_DOWN_POSITION, FORK_UP_POSITION,
+    FORK_SERVO_A_PIN, FORK_SERVO_B_PIN, FORK_SERVO_C_PIN, # Updated servo pins
+    FORK_SERVO_D_PIN, FORK_SERVO_E_PIN, FORK_SERVO_F_PIN, # Updated servo pins
+    MANUAL_TURN_SPEED, FORK_DOWN_POSITION, FORK_UP_POSITION,
     AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, AUTONAV_FORK_CARRY_ANGLE,
     OVERHEAD_CAMERA_HOST, OVERHEAD_CAMERA_PORT,
     # Assuming a default file path, can be moved to config.py if preferred
@@ -120,9 +122,40 @@ class ForkliftServer:
         
         # Initialize hardware controllers
         self.motor_controller = MotorController()
-        self.servo_controller = ServoController()
         self.navigation_controller = NavigationController(self.motor_controller)
+
+        # Initialize Servo Controllers
+        self.servos: Dict[int, ServoController] = {}
+        # Names like "fork_a", "fork_b" are for logging/identification if needed, the pin is the key.
+        servo_pins_map = {
+            "fork_a": FORK_SERVO_A_PIN, 
+            "fork_b": FORK_SERVO_B_PIN,
+            "fork_c": FORK_SERVO_C_PIN,
+            "fork_d": FORK_SERVO_D_PIN,
+            "fork_e": FORK_SERVO_E_PIN,
+            "fork_f": FORK_SERVO_F_PIN,
+        }
+
+        for name, pin in servo_pins_map.items():
+            try:
+                # All servos are forks, so initialize them with fork-specific settings
+                controller = ServoController(
+                    pin_number=pin,
+                    initial_position_degrees=FORK_DOWN_POSITION,
+                    min_angle=FORK_UP_POSITION,
+                    max_angle=FORK_DOWN_POSITION
+                )
+                # Explicitly set to FORK_DOWN_POSITION on startup
+                controller.set_position(FORK_DOWN_POSITION, blocking=False) 
+
+                self.servos[pin] = controller
+                logger.info(f"Initialized servo '{name}' on pin {pin} with fork settings.")
+            except Exception as e:
+                logger.error(f"Failed to initialize servo '{name}' on pin {pin}: {e}", exc_info=True)
         
+        # Keep a direct reference to the primary fork servo (Fork A) for convenience (e.g. autonav)
+        self.primary_fork_servo: Optional[ServoController] = self.servos.get(FORK_SERVO_A_PIN)
+
         # Initialize Overhead Camera Client
         self.overhead_camera_client = WarehouseCameraClient(
             host=OVERHEAD_CAMERA_HOST, 
@@ -131,7 +164,8 @@ class ForkliftServer:
         # Initialize Overhead Localizer
         self.overhead_localizer = OverheadLocalizer()
         # Explicitly set to FORK_DOWN_POSITION (80) on startup
-        self.servo_controller.set_position(FORK_DOWN_POSITION)  
+        if self.primary_fork_servo: # Ensure primary_fork_servo was initialized
+            self.primary_fork_servo.set_position(FORK_DOWN_POSITION, blocking=False) # Set fork servo position
         
         # Initialize network components, passing configured host and ports
         self.video_streamer = VideoStreamer(host=HOST, port=SERVER_VIDEO_UDP_PORT)
@@ -195,17 +229,29 @@ class ForkliftServer:
         value = data.get("value", {})
         position = value.get('position')
         action = value.get("action", "SET")
+        
+        # Determine target servo. Default to FORK_SERVO_A_PIN if not specified.
+        target_pin = value.get('pin', FORK_SERVO_A_PIN) 
+        
+        servo_to_control = self.servos.get(target_pin)
+
+        if not servo_to_control:
+            logger.error(f"Servo command for unconfigured pin {target_pin}. Available pins: {list(self.servos.keys())}")
+            return
+
+        logger.info(f"Targeting servo on pin {target_pin} with command: {value}")
+
         if action == "SET" and position is not None:
             try:
-                self.servo_controller.set_position(float(position))
+                servo_to_control.set_position(float(position))
             except ValueError:
-                logger.error(f"Invalid servo position: {position}")
-        elif value.get('step_up'):
-            self.servo_controller.go_to_up_position()
-        elif value.get('step_down'):
-            self.servo_controller.go_to_down_position()
+                logger.error(f"Invalid servo position: {position} for pin {target_pin}")
+        elif value.get('step_up'): # This will now be a 2-degree step for the targeted servo
+            servo_to_control.go_to_up_position() # Assumes 2-degree step is implemented in ServoController
+        elif value.get('step_down'): # This will now be a 2-degree step
+            servo_to_control.go_to_down_position() # Assumes 2-degree step is implemented in ServoController
         else:
-            logger.warning(f"Unknown servo action or missing position in command: {value}")
+            logger.warning(f"Unknown servo action or missing position in command for pin {target_pin}: {value}")
     
     def _handle_emergency_stop(self, data: Dict[str, Any]):
         """Handle emergency stop command"""
@@ -248,7 +294,8 @@ class ForkliftServer:
             if hasattr(self, 'navigation_controller') and self.navigation_controller:
                 self.navigation_controller.clear_target() # Stops motors and resets NavController
             logger.info("Setting servo to FORK_DOWN_POSITION on auto-nav deactivation.")
-            self.servo_controller.set_position(FORK_DOWN_POSITION)
+            if self.primary_fork_servo: # Ensure primary_fork_servo was initialized
+                self.primary_fork_servo.set_position(FORK_DOWN_POSITION, blocking=False) # Set fork servo position
     
     def _handle_set_nav_turning_pid(self, data: Dict[str, Any]):
         """Handles command to set turning PID gains for NavigationController."""
@@ -452,14 +499,20 @@ class ForkliftServer:
 
                     elif self.autonav_stage == AUTONAV_STAGE_LOWERING_FORKS:
                         logger.info(f"AutoNav: Stage LOWERING_FORKS. Lowering forks to {AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE} deg.")
-                        self.servo_controller.set_position(AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, blocking=True)
+                        if self.primary_fork_servo: # Check if primary_fork_servo exists
+                            self.primary_fork_servo.set_position(AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, blocking=True)
+                        else:
+                            logger.error("Primary fork servo (A) not initialized, cannot lower for autonav.")
                         logger.info("AutoNav: Forks lowered. Simulating pickup (delay 1s). Transition: LOWERING_FORKS -> LIFTING_FORKS")
                         time.sleep(1.0) # Simulate pickup time
                         self.autonav_stage = AUTONAV_STAGE_LIFTING_FORKS
 
                     elif self.autonav_stage == AUTONAV_STAGE_LIFTING_FORKS:
                         logger.info(f"AutoNav: Stage LIFTING_FORKS. Lifting forks to {AUTONAV_FORK_CARRY_ANGLE} deg.")
-                        self.servo_controller.set_position(AUTONAV_FORK_CARRY_ANGLE, blocking=True) # Corrected call
+                        if self.primary_fork_servo: # Check if primary_fork_servo exists
+                            self.primary_fork_servo.set_position(AUTONAV_FORK_CARRY_ANGLE, blocking=True)
+                        else:
+                            logger.error("Primary fork servo (A) not initialized, cannot lift for autonav.")
                         logger.info("AutoNav: Forks lifted. Sequence complete. Transition: LIFTING_FORKS -> IDLE")
                         self.autonav_stage = AUTONAV_STAGE_IDLE 
                         # To re-run, user must toggle autonav off then on, or logic for re-engaging NAVIGATING from IDLE would be needed.
@@ -483,9 +536,14 @@ class ForkliftServer:
         finally:
             logger.info("ForkliftServer._run_main_loop_async.finally: Main loop ended or exception. Ensuring motors stopped.")
             self.motor_controller.stop()
-            if self.servo_controller:
-                logger.info("ForkliftServer._run_main_loop_async.finally: Cleaning up servo controller.")
-                self.servo_controller.cleanup()
+            if hasattr(self, 'servos'):
+                logger.info("ForkliftServer._run_main_loop_async.finally: Cleaning up servo controllers.")
+                for pin, servo_controller_instance in self.servos.items():
+                    try:
+                        logger.info(f"Cleaning up servo on pin {pin}...")
+                        servo_controller_instance.cleanup()
+                    except Exception as e:
+                        logger.error(f"Error cleaning up servo on pin {pin}: {e}", exc_info=True)
             
             # Disconnect overhead camera client
             if self.overhead_camera_client:
@@ -501,81 +559,69 @@ class ForkliftServer:
 
     def cleanup(self):
         """Clean up resources"""
-        if not self.cleanup_lock.acquire(blocking=False):
-            logger.warning("Cleanup already in progress")
-            return
-            
-        try:
-            logger.info("Cleaning up ForkliftServer resources...")
+        with self.cleanup_lock:
+            if not self.running:
+                self.cleanup_complete.set() # Already cleaned up or in progress
+                return
 
-            # Ensure motors are stopped and servo is reset first
-            try:
-                logger.info("Stopping motors definitively...")
-                self.motor_controller.stop()
-            except Exception as e:
-                logger.error(f"Error during motor_controller.stop() in cleanup: {e}")
-            try:
-                logger.info("Resetting servo to default down position definitively...") # Updated log to reflect 80 degrees
-                self.servo_controller.set_position(FORK_DOWN_POSITION) # Use FORK_DOWN_POSITION (80)
-            except Exception as e:
-                logger.error(f"Error during servo_controller.set_position(FORK_DOWN_POSITION) in cleanup: {e}")
-            
-            # Then stop network components
-            try:
-                self.video_streamer.stop()
-                logger.info("Video streamer stopped")
-            except Exception as e:
-                logger.error(f"Error stopping video streamer: {e}")
-                
-            try:
-                self.overhead_video_streamer.stop()
-                logger.info("Overhead video streamer stopped")
-            except Exception as e:
-                logger.error(f"Error stopping overhead video streamer: {e}")
-                
-            try:
+            logger.info("Initiating server shutdown sequence...")
+            self.running = False # Signal all threads to stop
+
+            # Stop network components first
+            if hasattr(self, 'command_server'):
+                logger.info("Stopping Command Server...")
                 self.command_server.stop()
-                logger.info("Command server stopped")
-            except Exception as e:
-                logger.error(f"Error stopping command server: {e}")
-            
-            # Then clean up resources for network components
-            try:
-                self.video_streamer.cleanup()
-                logger.info("Video streamer cleaned up")
-            except Exception as e:
-                logger.error(f"Error cleaning up video streamer: {e}")
-                
-            try:
-                self.overhead_video_streamer.cleanup()
-                logger.info("Overhead video streamer cleaned up")
-            except Exception as e:
-                logger.error(f"Error cleaning up overhead video streamer: {e}")
-                
-            try:
-                self.command_server.cleanup()
-                logger.info("Command server cleaned up")
-            except Exception as e:
-                logger.error(f"Error cleaning up command server: {e}")
-                
-            # Then clean up hardware controllers
-            try:
+            if hasattr(self, 'video_streamer'):
+                logger.info("Stopping Onboard Video Streamer...")
+                self.video_streamer.stop_stream()
+            if hasattr(self, 'overhead_video_streamer'):
+                logger.info("Stopping Overhead Video Streamer...")
+                self.overhead_video_streamer.stop()
+            if hasattr(self, 'overhead_camera_client'):
+                logger.info("Disconnecting Overhead Camera Client...")
+                self.overhead_camera_client.disconnect()
+
+            # Join threads (ensure they have a chance to exit cleanly)
+            # Give threads a timeout to join
+            timeout_seconds = 2.0 
+            if hasattr(self, 'command_thread') and self.command_thread.is_alive():
+                logger.info("Waiting for Command Server thread to join...")
+                self.command_thread.join(timeout=timeout_seconds)
+            if hasattr(self, 'video_thread') and self.video_thread.is_alive():
+                logger.info("Waiting for Onboard Video Streamer thread to join...")
+                self.video_thread.join(timeout=timeout_seconds)
+            if hasattr(self, 'overhead_video_thread') and self.overhead_video_thread.is_alive():
+                logger.info("Waiting for Overhead Video Streamer thread to join...")
+                self.overhead_video_thread.join(timeout=timeout_seconds)
+            # Overhead camera client thread is managed internally by its connect/disconnect
+
+            if hasattr(self, 'navigation_controller'):
+                logger.info("Stopping Navigation Controller...")
+                self.navigation_controller.clear_target() # Also stops motors
+
+            # Cleanup hardware controllers
+            if hasattr(self, 'motor_controller'):
+                logger.info("Cleaning up Motor Controller...")
                 self.motor_controller.cleanup()
-                logger.info("Motor controller cleaned up")
-            except Exception as e:
-                logger.error(f"Error cleaning up motor controller: {e}")
-                
+            
+            # Cleanup all servo controllers
+            if hasattr(self, 'servos'):
+                logger.info("Cleaning up Servo Controllers...")
+                for pin, servo_controller_instance in self.servos.items():
+                    try:
+                        logger.info(f"Cleaning up servo on pin {pin}...")
+                        servo_controller_instance.cleanup()
+                    except Exception as e:
+                        logger.error(f"Error cleaning up servo on pin {pin}: {e}", exc_info=True)
+            
+            logger.info("GPIO cleanup...")
             try:
-                self.servo_controller.cleanup()
-                logger.info("Servo controller cleaned up")
+                GPIO.cleanup() # General GPIO cleanup
             except Exception as e:
-                logger.error(f"Error cleaning up servo controller: {e}")
-            
-            logger.info("Cleanup complete")
-            
-        finally:
-            self.cleanup_complete.set()
-            self.cleanup_lock.release()
+                logger.error(f"Error during general GPIO.cleanup(): {e}", exc_info=True)
+
+            logger.info("ForkliftServer cleanup complete.")
+            self.cleanup_complete.set() # Signal that cleanup is done
 
     def _load_overhead_target_poses(self):
         try:

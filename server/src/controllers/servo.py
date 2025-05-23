@@ -15,17 +15,17 @@ SERVO_MIN_PULSEWIDTH = 500  # Microseconds for 0 degrees (typical)
 SERVO_MAX_PULSEWIDTH = 2500 # Microseconds for 180 degrees (typical)
 
 class ServoController:
-    def __init__(self):
-        self.pin = SERVO_PWM_PIN
-        # Initialize to the default FORK_DOWN_POSITION (now 80)
-        self.current_position_degrees = FORK_DOWN_POSITION 
+    def __init__(self, pin_number: int, initial_position_degrees: float = FORK_DOWN_POSITION, min_angle: float = FORK_UP_POSITION, max_angle: float = FORK_DOWN_POSITION):
+        self.pin = pin_number
+        # Initialize to the provided initial_position_degrees
+        self.current_position_degrees = initial_position_degrees 
         
         self.step_degrees = SERVO_STEP_DEGREES
         self.step_delay_seconds = SERVO_STEP_DELAY_SECONDS
         
-        # Set min/max angles. Min is FORK_UP_POSITION (0). Max is FORK_DOWN_POSITION (80).
-        self.min_angle_degrees = FORK_UP_POSITION 
-        self.max_angle_degrees = FORK_DOWN_POSITION # This is 80, same as AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE
+        # Set min/max angles based on parameters
+        self.min_angle_degrees = min_angle 
+        self.max_angle_degrees = max_angle
 
         try:
             self.pi = pigpio.pi() 
@@ -112,12 +112,16 @@ class ServoController:
         logger.info(f"Servo: Reached target {self.current_position_degrees:.2f} deg. Pulses stopped.")
     
     def go_to_down_position(self, blocking: bool = True):
-        logger.info("Servo: Moving to FORK_DOWN_POSITION.") # Will target 80
-        self.set_position(FORK_DOWN_POSITION, blocking=blocking)
+        logger.info("Servo: Stepping down by 2 degrees.")
+        new_position = self.current_position_degrees + 2.0 # Positive angle moves fork down
+        new_position = min(new_position, self.max_angle_degrees) # Ensure it doesn't exceed max
+        self.set_position(new_position, blocking=blocking)
 
     def go_to_up_position(self, blocking: bool = True):
-        logger.info("Servo: Moving to FORK_UP_POSITION.") # Will target 0
-        self.set_position(FORK_UP_POSITION, blocking=blocking)
+        logger.info("Servo: Stepping up by 2 degrees.")
+        new_position = self.current_position_degrees - 2.0 # Negative angle moves fork up
+        new_position = max(new_position, self.min_angle_degrees) # Ensure it doesn't exceed min
+        self.set_position(new_position, blocking=blocking)
 
     def go_to_autonav_carry_position(self, blocking: bool = True):
         logger.info(f"Servo: Moving to AUTONAV_FORK_CARRY_ANGLE ({AUTONAV_FORK_CARRY_ANGLE} deg).")
