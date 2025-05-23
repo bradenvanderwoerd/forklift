@@ -120,6 +120,19 @@ class VideoStreamer:
             # Initialize the camera using picamera2
             self.camera = Picamera2()
             
+            # --- Inspect sensor modes (for debugging/understanding) ---
+            try:
+                modes = self.camera.sensor_modes
+                if modes:
+                    logger.info(f"Available sensor modes ({len(modes)} total):")
+                    for i, mode in enumerate(modes):
+                        logger.info(f"  Sensor Mode {i}: {mode}")
+                else:
+                    logger.info("No sensor modes reported by camera.")
+            except Exception as e:
+                logger.error(f"Error inspecting sensor modes: {e}")
+            # --- End inspection ---
+            
             # Define the full sensor area for ScalerCrop (assuming a V2 camera, 3280x2464)
             # This tells the camera to use the full sensor and then scale to the main/lores size.
             # If you have a different camera (V1, V3, HQ), these max values might differ.
