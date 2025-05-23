@@ -119,36 +119,57 @@ class VideoStreamer:
         try:
             # Initialize the camera using picamera2
             self.camera = Picamera2()
-            
-            # --- Inspect sensor modes (for debugging/understanding) ---
+
+            # --- Inspect sensor modes and select the best one for full FoV ---
+            selected_mode = None
             try:
                 modes = self.camera.sensor_modes
                 if modes:
                     logger.info(f"Available sensor modes ({len(modes)} total):")
-                    for i, mode in enumerate(modes):
-                        logger.info(f"  Sensor Mode {i}: {mode}")
+                    # Prefer 3280x2464 SRGGB8 (often mode 7), then SRGGB10 (often mode 3)
+                    # This is specific to IMX219 (Pi Camera V2)
+                    target_modes_priority = [
+                        {'size': (3280, 2464), 'format': 'SRGGB8'}, 
+                        {'size': (3280, 2464), 'format': 'SRGGB10_CSI2P'}, # unpacked is SRGGB10
+                    ]
+                    
+                    found_mode_info = None
+                    for target in target_modes_priority:
+                        for i, mode in enumerate(modes):
+                            # Check main properties. Format might be represented differently (e.g. SRGGB10 vs SRGGB10_CSI2P)
+                            # The logged 'format' for mode 3 was SRGGB10_CSI2P, mode 7 was SRGGB8.
+                            if mode['size'] == target['size'] and (str(mode['format']) == target['format'] or mode.get('unpacked') == target['format']):
+                                selected_mode = modes[i] # Use the actual mode object
+                                found_mode_info = f"Sensor Mode {i}: {mode}"
+                                break
+                        if selected_mode:
+                            break
+                    
+                    if selected_mode:
+                        logger.info(f"Selected sensor mode for full FoV: {found_mode_info}")
+                        self.camera.sensor_mode = selected_mode
+                    else:
+                        logger.warning("Could not find a preferred 3280x2464 sensor mode. Defaulting to picamera2 auto-selection.")
                 else:
                     logger.info("No sensor modes reported by camera.")
             except Exception as e:
-                logger.error(f"Error inspecting sensor modes: {e}")
-            # --- End inspection ---
+                logger.error(f"Error selecting sensor mode: {e}")
+            # --- End sensor mode selection ---
             
-            # Define the full sensor area for ScalerCrop (assuming a V2 camera, 3280x2464)
-            # This tells the camera to use the full sensor and then scale to the main/lores size.
-            # If you have a different camera (V1, V3, HQ), these max values might differ.
-            # For a Raspberry Pi Camera Module v2, max resolution is 3280x2464.
-            # For Camera Module v3, it's 4608x2592.
-            # Using V2's max resolution as a common default.
-            # If you know your exact camera, update these:
-            full_sensor_width = 3280 
-            full_sensor_height = 2464
+            # Define the sensor area based on selected mode or default to V2 max for ScalerCrop
+            if selected_mode:
+                full_sensor_width = selected_mode['size'][0]
+                full_sensor_height = selected_mode['size'][1]
+            else: # Fallback if mode selection failed
+                full_sensor_width = 3280 
+                full_sensor_height = 2464
 
             logger.info(f"Attempting to set ScalerCrop to (0, 0, {full_sensor_width}, {full_sensor_height}) to maximize FoV.")
             logger.info(f"Output resolution will be {config.VIDEO_WIDTH}x{config.VIDEO_HEIGHT}.")
 
             camera_config = self.camera.create_video_configuration(
                 main={"size": (config.VIDEO_WIDTH, config.VIDEO_HEIGHT), "format": "RGB888"},
-                lores={"size": (config.VIDEO_WIDTH, config.VIDEO_HEIGHT), "format": "YUV420"}, # Keep lores same for simplicity or adjust if needed
+                lores={"size": (config.VIDEO_WIDTH, config.VIDEO_HEIGHT), "format": "YUV420"}, 
                 controls={"ScalerCrop": (0, 0, full_sensor_width, full_sensor_height)}
             )
             self.camera.configure(camera_config)
