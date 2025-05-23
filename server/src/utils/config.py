@@ -140,7 +140,7 @@ SERVO_STEP_DELAY_SECONDS = 0.015 # Delay between each step (controls speed)
 
 # --- New Overhead Camera Configuration ---
 OVERHEAD_CAMERA_HOST = "192.168.0.100" # TODO: Update with actual Arena Server IP
-OVERHEAD_CAMERA_PORT = 5001
+OVERHEAD_CAMERA_PORT = 4001
 ROBOT_OVERHEAD_ARUCO_ID = 36 # ArUco ID of the marker on top of the robot
 OVERHEAD_VIDEO_WEBSOCKET_PORT = 3458 # New port for streaming overhead video via WebSocket
 # ARUCO_DICTIONARY_OVERHEAD = cv2.aruco.DICT_6X6_50 # Defined globally if same as ARUCO_DICTIONARY

@@ -6,13 +6,15 @@ from PyQt6.QtGui import QImage, QPixmap, QKeyEvent, QDoubleValidator
 import cv2
 import numpy as np
 from src.network.client import RobotClient
+from src.network.direct_warehouse_feed import DirectWarehouseFeedReceiver
 import logging
 from typing import Optional, Dict
 
-# Import client-side config for servo pins
+# Import client-side config for servo pins AND direct warehouse feed
 from src.utils.config import (FORK_SERVO_A_PIN, FORK_SERVO_B_PIN, FORK_SERVO_C_PIN,
                               FORK_SERVO_D_PIN, FORK_SERVO_E_PIN, FORK_SERVO_F_PIN,
-                              SERVO_KEY_TO_PIN_MAPPING, UI_SERVO_ORDER_MAPPING)
+                              SERVO_KEY_TO_PIN_MAPPING, UI_SERVO_ORDER_MAPPING,
+                              DIRECT_WAREHOUSE_CAMERA_HOST, DIRECT_WAREHOUSE_CAMERA_PORT)
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,11 @@ class MainWindow(QMainWindow):
         self.setFocus()
         
         self.robot_client = RobotClient()
+        self.direct_feed_receiver = DirectWarehouseFeedReceiver(
+            host=DIRECT_WAREHOUSE_CAMERA_HOST,
+            port=DIRECT_WAREHOUSE_CAMERA_PORT
+        )
+        self.overhead_feed_source = "pi" # "pi" or "direct"
         self.selected_servo_pin = FORK_SERVO_A_PIN # Default to Fork A (pin 13)
         self.servo_key_displays: Dict[int, KeyDisplay] = {} # To store pin -> KeyDisplay mapping for servo grid
         
@@ -169,10 +176,10 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(servo_selection_group)
         self._update_servo_selection_display() # Initial highlight
 
-        # Control buttons (Connect, AutoNav, E-Stop) (middle-right)
+        # Control buttons (Connect, AutoNav, E-Stop, Switch Feed) (middle-right)
         action_buttons_layout = QVBoxLayout()
-        self.connect_button = QPushButton("Connect")
-        self.connect_button.clicked.connect(self.toggle_connection)
+        self.connect_button = QPushButton("Connect to Pi") # Renamed for clarity
+        self.connect_button.clicked.connect(self.toggle_pi_connection)
         action_buttons_layout.addWidget(self.connect_button)
         
         self.autonav_button = QPushButton("Start Auto-Nav")
@@ -194,6 +201,12 @@ class MainWindow(QMainWindow):
         self.emergency_button.setStyleSheet("background-color: red; color: white;")
         self.emergency_button.clicked.connect(self.emergency_stop)
         action_buttons_layout.addWidget(self.emergency_button)
+
+        self.switch_feed_button = QPushButton("Switch to Direct Overhead")
+        self.switch_feed_button.clicked.connect(self.toggle_overhead_source)
+        self.switch_feed_button.setEnabled(False) # Enabled when Pi is connected
+        action_buttons_layout.addWidget(self.switch_feed_button)
+
         control_layout.addLayout(action_buttons_layout)
         
         # PID Tuning UI Section (far right)
@@ -227,7 +240,7 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self.update_video_feeds) # Renamed method
         self.timer.start(33)  # ~30 FPS
         
-        self.is_connected = False
+        self.is_connected = False # This now refers to Pi connection state
         self.on_speed_change(self.speed_slider.value()) # Initialize current_speed correctly
         self.is_autonav_active = False
         self._update_servo_selection_display() # Initial update
@@ -272,7 +285,7 @@ class MainWindow(QMainWindow):
         elif key == Qt.Key.Key_D: self.d_key.set_active(True); self.robot_client.send_command("drive", {"direction": "RIGHT", "speed": self.current_speed})
             
     def keyReleaseEvent(self, event: QKeyEvent):
-        if not self.is_connected or self.is_autonav_active: return
+        if not self.is_connected or self.is_autonav_active: return # Based on Pi connection
         key = event.key()
 
         # Servo (Fork) Control Release
@@ -292,34 +305,65 @@ class MainWindow(QMainWindow):
         elif key == Qt.Key.Key_D: self.d_key.set_active(False)
         elif key == Qt.Key.Key_Space: self.space_key.set_active(False)
             
-    def toggle_connection(self):
+    def toggle_pi_connection(self):
         if not self.is_connected:
-            logger.info("CLIENT: Attempting to connect...")
+            logger.info("CLIENT: Attempting to connect to Pi...")
             self.robot_client.connect()
-            # Note: Connection status (self.is_connected) should ideally be updated based on feedback
-            # from the client thread or by checking client.is_connected after a short delay.
-            # For simplicity, we'll assume it connects quickly here for UI purposes.
-            self.connect_button.setText("Disconnect")
+            self.connect_button.setText("Disconnect from Pi")
             self.autonav_button.setEnabled(True)
             if hasattr(self, 'pid_tuning_group'): self.pid_tuning_group.setEnabled(True)
-            self.set_pickup_button.setEnabled(True)   # Enable on connect
-            self.set_dropoff_button.setEnabled(True) # Enable on connect
-            self.is_connected = True # Assume connection success for UI feedback
-            logger.info("CLIENT: Connect button pressed. RobotClient.connect() called.")
+            self.set_pickup_button.setEnabled(True)   
+            self.set_dropoff_button.setEnabled(True) 
+            self.switch_feed_button.setEnabled(True) # Enable feed switch button
+            self.is_connected = True 
+            logger.info("CLIENT: Connect to Pi button pressed. RobotClient.connect() called.")
+            # Default to Pi feed when connecting to Pi
+            if self.overhead_feed_source == "direct":
+                 self.direct_feed_receiver.disconnect()
+            self.overhead_feed_source = "pi"
+            self.switch_feed_button.setText("Switch to Direct Overhead")
+
         else:
-            logger.info("CLIENT: Attempting to disconnect...")
-            if self.is_autonav_active: self.toggle_autonav() # Stop autonav if active
+            logger.info("CLIENT: Attempting to disconnect from Pi...")
+            if self.is_autonav_active: self.toggle_autonav() 
             self.robot_client.disconnect()
-            self.connect_button.setText("Connect")
+            # Also disconnect direct feed if it was active
+            if self.direct_feed_receiver.is_connected:
+                self.direct_feed_receiver.disconnect()
+            
+            self.connect_button.setText("Connect to Pi")
             self.autonav_button.setEnabled(False)
             if hasattr(self, 'pid_tuning_group'): self.pid_tuning_group.setEnabled(False)
-            self.set_pickup_button.setEnabled(False)   # Disable on disconnect
-            self.set_dropoff_button.setEnabled(False) # Disable on disconnect
+            self.set_pickup_button.setEnabled(False)  
+            self.set_dropoff_button.setEnabled(False) 
+            self.switch_feed_button.setEnabled(False) # Disable feed switch
+            self.switch_feed_button.setText("Switch to Direct Overhead") # Reset text
+            self.overhead_feed_source = "pi" # Reset to default
             self.is_connected = False
-            # Clear video feeds on disconnect
-            self.onboard_video_label.setText("Disconnected"); self.onboard_video_label.setStyleSheet("background-color: black; color: grey;")
-            self.overhead_video_label.setText("Disconnected"); self.overhead_video_label.setStyleSheet("background-color: black; color: grey;")
-            logger.info("CLIENT: Disconnect button pressed. RobotClient.disconnect() called.")
+            self.onboard_video_label.setText("Disconnected from Pi"); self.onboard_video_label.setStyleSheet("background-color: black; color: grey;")
+            self.overhead_video_label.setText("Disconnected from Pi"); self.overhead_video_label.setStyleSheet("background-color: black; color: grey;")
+            logger.info("CLIENT: Disconnect from Pi button pressed. RobotClient.disconnect() called.")
+
+    def toggle_overhead_source(self):
+        if not self.is_connected: # Requires Pi connection to be active first
+            logger.warning("Cannot switch overhead source, Pi is not connected.")
+            return
+
+        if self.overhead_feed_source == "pi":
+            logger.info("CLIENT: Switching overhead feed to DIRECT.")
+            # self.robot_client.pause_overhead_stream() # Future: tell Pi to pause sending its stream
+            self.direct_feed_receiver.connect()
+            self.overhead_feed_source = "direct"
+            self.switch_feed_button.setText("Switch to Pi Overhead")
+            self.overhead_video_label.setText("Waiting for Direct Overhead...") # Update label
+        elif self.overhead_feed_source == "direct":
+            logger.info("CLIENT: Switching overhead feed to PI.")
+            self.direct_feed_receiver.disconnect()
+            # self.robot_client.resume_overhead_stream() # Future: tell Pi to resume sending
+            self.overhead_feed_source = "pi"
+            self.switch_feed_button.setText("Switch to Direct Overhead")
+            self.overhead_video_label.setText("Waiting for Pi Overhead...") # Update label
+        self.setFocus() # Refocus main window
 
     def emergency_stop(self):
         logger.info("CLIENT: Emergency Stop triggered!")
@@ -363,13 +407,28 @@ class MainWindow(QMainWindow):
         # else: Do nothing, keep last frame or "Waiting..." text
             
     def update_video_feeds(self):
-        if self.robot_client and self.robot_client.is_connected: # Check overall connection
+        if self.robot_client and self.robot_client.is_connected: 
             onboard_frame = self.robot_client.get_onboard_video_frame()
             self._update_single_video_feed(onboard_frame, self.onboard_video_label, "Onboard")
             
-            overhead_frame = self.robot_client.get_overhead_video_frame()
-            self._update_single_video_feed(overhead_frame, self.overhead_video_label, "Overhead")
-        # If not connected, labels show "Disconnected" or "Waiting..."
+            # Overhead feed handling based on source
+            if self.overhead_feed_source == "pi":
+                overhead_frame = self.robot_client.get_overhead_video_frame()
+                self._update_single_video_feed(overhead_frame, self.overhead_video_label, "Overhead (Pi)")
+            elif self.overhead_feed_source == "direct":
+                if not self.direct_feed_receiver.is_connected and not self.direct_feed_receiver.thread:
+                    # Attempt to start it if user clicked connect to Pi, then switch, but it failed initially
+                    logger.info("Direct feed not connected, attempting to connect it now for display.")
+                    self.direct_feed_receiver.connect()
+                
+                overhead_frame = self.direct_feed_receiver.get_video_frame()
+                if overhead_frame is not None:
+                    self._update_single_video_feed(overhead_frame, self.overhead_video_label, "Overhead (Direct)")
+                # else: keep "Waiting for Direct Overhead..." or last frame
+
+        elif not self.is_connected: # Explicitly Pi not connected
+             self.onboard_video_label.setText("Disconnected from Pi"); 
+             self.overhead_video_label.setText("Disconnected from Pi"); 
 
     def apply_turning_pid_settings(self):
         if not self.is_connected: return
@@ -397,6 +456,7 @@ class MainWindow(QMainWindow):
         logger.info(f"CLIENT: Sent SET_OVERHEAD_TARGET for '{target_name}'")
 
     def closeEvent(self, event):
-        logger.info("CLIENT: MainWindow closeEvent triggered. Disconnecting client.")
-        self.robot_client.disconnect() # Ensure client disconnects when window is closed
+        logger.info("CLIENT: MainWindow closeEvent triggered. Disconnecting client and direct feed.")
+        self.robot_client.disconnect() 
+        self.direct_feed_receiver.disconnect() # Ensure direct feed is also disconnected
         super().closeEvent(event) 

@@ -33,3 +33,9 @@ SERVO_KEY_TO_PIN_MAPPING = {
     '5': FORK_SERVO_E_PIN,
     '6': FORK_SERVO_F_PIN
 } 
+
+# --- Direct Warehouse Camera Connection --- 
+# Used by the client to connect directly to the warehouse camera feed for lower latency.
+# These might be the same as the server uses (OVERHEAD_CAMERA_HOST/PORT in server config)
+DIRECT_WAREHOUSE_CAMERA_HOST = "192.168.0.100" # Host of the warehouse camera server
+DIRECT_WAREHOUSE_CAMERA_PORT = 5001          # Port for the warehouse camera's video stream service 
