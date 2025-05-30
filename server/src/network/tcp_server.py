@@ -156,7 +156,8 @@ class CommandServer:
             self.host,
             self.port,
             ping_interval=20,
-            ping_timeout=20
+            ping_timeout=20,
+            reuse_address=True 
         ) as server:
             self.server = server
             self.running = True

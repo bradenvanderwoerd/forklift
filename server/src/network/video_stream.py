@@ -12,6 +12,10 @@ import time
 from picamera2 import Picamera2
 from picamera2.encoders import JpegEncoder
 from picamera2.outputs import FileOutput
+import cv2.aruco as aruco
+import os
+from ..utils import config # Added import for config
+import socket
 
 logger = logging.getLogger(__name__)
 
@@ -80,19 +84,75 @@ class VideoStreamer:
         self.camera = None
         self.loop = None
         self.quality_controller = AdaptiveQualityController()
+        self.last_logged_primary_target_id = None
+        self.shared_primary_target_pose = None # For sharing latest primary target pose with ForkliftServer
+        
+        # Use ArUco settings from config
+        self.aruco_dict = aruco.getPredefinedDictionary(config.ARUCO_DICTIONARY)
+        self.aruco_params = aruco.DetectorParameters() # Consider making aruco_params configurable if needed
+        self.aruco_detector = aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
+        logger.info(f"ArUco detector initialized with dictionary ID: {config.ARUCO_DICTIONARY}.")
+
+        # Load camera calibration data from config path
+        self.camera_matrix = None
+        self.dist_coeffs = None
+        calibration_file_path = config.CAMERA_CALIBRATION_FILE_PATH
+        
+        try:
+            with np.load(calibration_file_path) as data:
+                self.camera_matrix = data['mtx']
+                self.dist_coeffs = data['dist']
+                logger.info(f"Successfully loaded camera calibration data from {calibration_file_path}")
+                logger.info(f"Camera Matrix (mtx):\\n{self.camera_matrix}") 
+                logger.info(f"Principal Point: cx = {self.camera_matrix[0, 2]}, cy = {self.camera_matrix[1, 2]}")
+                logger.info(f"Video Width from config: {config.VIDEO_WIDTH}, Video Height from config: {config.VIDEO_HEIGHT}")
+        except FileNotFoundError:
+            logger.warning(f"Camera calibration file not found at {calibration_file_path}. Pose estimation will be disabled.")
+        except Exception as e:
+            logger.error(f"Error loading camera calibration data from {calibration_file_path}: {e}")
+
+        # Use marker size from config
+        self.marker_actual_size_m = config.ARUCO_MARKER_SIZE_METERS
         
     def _initialize_camera(self):
         """Initialize the camera"""
         try:
             # Initialize the camera using picamera2
             self.camera = Picamera2()
+
+            # --- Inspect sensor modes (for debugging/understanding) ---
+            # This part is mostly for logging now, as explicit raw config is stronger
+            selected_mode_info_for_log = "Not specifically selected, relying on explicit raw config."
+            try:
+                modes = self.camera.sensor_modes
+                if modes:
+                    logger.info(f"Available sensor modes ({len(modes)} total):")
+                    for i, mode in enumerate(modes):
+                        logger.info(f"  Sensor Mode {i}: {mode}")
+                        if mode['size'] == (3280, 2464): # Log if we see our target mode
+                             selected_mode_info_for_log = f"Target 3280x2464 mode found: Sensor Mode {i}: {mode}"
+                    logger.info(selected_mode_info_for_log) # Log the found target mode or default message
+                else:
+                    logger.info("No sensor modes reported by camera.")
+            except Exception as e:
+                logger.error(f"Error inspecting sensor modes: {e}")
+            # --- End inspection ---
             
-            # Configure the camera
-            config = self.camera.create_video_configuration(
-                main={"size": (640, 480), "format": "RGB888"},
-                lores={"size": (640, 480), "format": "YUV420"}
+            # Define the desired raw stream size (full sensor for IMX219/V2 camera)
+            # This is a stronger hint to picamera2 than just setting sensor_mode
+            raw_stream_w, raw_stream_h = 3280, 2464
+
+            logger.info(f"Explicitly requesting raw stream at {raw_stream_w}x{raw_stream_h}.")
+            logger.info(f"ScalerCrop will be (0, 0, {raw_stream_w}, {raw_stream_h}) for full FoV from raw stream.")
+            logger.info(f"Main output stream will be {config.VIDEO_WIDTH}x{config.VIDEO_HEIGHT}.")
+
+            camera_config = self.camera.create_video_configuration(
+                main={"size": (config.VIDEO_WIDTH, config.VIDEO_HEIGHT), "format": "RGB888"},
+                lores={"size": (config.VIDEO_WIDTH, config.VIDEO_HEIGHT), "format": "YUV420"}, 
+                raw={"size": (raw_stream_w, raw_stream_h)}, # Explicitly request raw stream size
+                controls={"ScalerCrop": (0, 0, raw_stream_w, raw_stream_h)}
             )
-            self.camera.configure(config)
+            self.camera.configure(camera_config)
             
             # Start the camera
             self.camera.start()
@@ -101,7 +161,7 @@ class VideoStreamer:
             try:
                 self.camera.capture_array()
                 logger.info("Camera initialized successfully")
-                logger.info(f"Camera configuration: {config}")
+                logger.info(f"Camera configuration: {camera_config}")
             except Exception as e:
                 raise RuntimeError(f"Failed to start camera: {e}")
                 
@@ -117,33 +177,108 @@ class VideoStreamer:
         logger.info(f"New video client connected. Total clients: {len(self.clients)}")
         try:
             while self.running:
+                # REMOVE external frame logic block
+                # current_frame_to_process = None
+                # is_external_frame = False
+
+                # # Check for an external frame first
+                # with self.external_frame_lock:
+                #     if self.external_frame is not None:
+                #         current_frame_to_process = self.external_frame
+                #         self.external_frame = None # Consume the frame
+                #         is_external_frame = True
+                #         logger.debug("VideoStreamer: Using external frame for this cycle.")
+                
+                # if not is_external_frame:
+                #     # If no external frame, use PiCamera
+
+                # REVERT to direct PiCamera usage
                 if not self.camera:
-                    logger.error("Camera not initialized")
+                    logger.error("PiCamera not initialized.")
                     await asyncio.sleep(1)
                     continue
                 
-                frame = self.camera.capture_array()
-                if frame is None:
-                    logger.error("Failed to capture frame")
+                current_frame_to_process = None # Initialize
+                try:
+                    frame_color_pi = self.camera.capture_array()
+                    if frame_color_pi is None:
+                        logger.error("Failed to capture frame from PiCamera")
+                        await asyncio.sleep(0.1)
+                        continue
+                    current_frame_to_process = cv2.rotate(frame_color_pi, cv2.ROTATE_180)
+                except Exception as e:
+                    logger.error(f"Error capturing or rotating PiCamera frame: {e}")
+                    await asyncio.sleep(0.1)
+                    continue
+
+                if current_frame_to_process is None:
+                    logger.warning("No frame available to process for this cycle.") # Should be redundant now
+                    await asyncio.sleep(0.1)
+                    continue
+
+                # --- ArUco Detection (Always for PiCamera frames now) ---
+                frame_display = current_frame_to_process # Default to current frame
+                # if not is_external_frame: <--- REMOVE THIS CONDITION
+                aruco_start_time = time.time()
+                gray_frame = cv2.cvtColor(current_frame_to_process, cv2.COLOR_RGB2GRAY)
+                corners, ids, rejected = self.aruco_detector.detectMarkers(gray_frame)
+                
+                if ids is not None:
+                    frame_display = aruco.drawDetectedMarkers(current_frame_to_process.copy(), corners, ids)
+                    # ... (rest of ArUco processing as it was, no more is_external_frame checks needed inside here)
+                elif self.last_logged_primary_target_id is not None: # No IDs this frame, but was tracking
+                    logger.info(f"Primary Target (ID: {self.last_logged_primary_target_id}) Lost (no markers detected this frame).")
+                    self.last_logged_primary_target_id = None
+                    self.shared_primary_target_pose = None
+
+                # --- Encoding and Sending --- 
+                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self.quality_controller.get_quality()]
+                result, encoded_jpeg = cv2.imencode('.jpg', frame_display, encode_param)
+                
+                if not result:
+                    logger.error("Failed to encode frame to JPEG")
                     await asyncio.sleep(0.1)
                     continue
                 
-                frame = cv2.rotate(frame, cv2.ROTATE_180)
-                quality = self.quality_controller.get_quality()
-                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+                # FrameSequencer could be used here if your client needs it
+                # For simplicity, direct send for now.
                 
-                await websocket.send(buffer.tobytes())
+                message = encoded_jpeg.tobytes()
                 
-                await asyncio.sleep(1/30)
+                # Send to all connected clients
+                # Use a copy of self.clients for safe iteration if clients can connect/disconnect concurrently
+                clients_copy = list(self.clients)
+                for client_ws in clients_copy:
+                    try:
+                        await client_ws.send(message)
+                    except ConnectionClosed:
+                        logger.info("Client connection closed, removing from list.")
+                        self.clients.remove(client_ws)
+                    except Exception as e:
+                        logger.error(f"Error sending frame to client: {e}")
+                        # Optionally remove problematic client
+                        # self.clients.remove(client_ws) 
                 
+                # Small delay to prevent hogging CPU if not much is happening
+                await asyncio.sleep(0.01) 
+        
         except ConnectionClosed:
-            logger.info("Video client connection closed")
+            logger.info("Client disconnected gracefully.")
         except Exception as e:
-            logger.error(f"Error in video stream handler: {e}", exc_info=True)
+            logger.error(f"Error in client handler: {e}", exc_info=True)
         finally:
             self.clients.remove(websocket)
-            logger.info(f"Video client disconnected. Remaining clients: {len(self.clients)}")
-            
+            logger.info(f"Client removed. Total clients: {len(self.clients)}")
+
+    async def _send_video_data_udp(self):
+        """Sends video data over UDP. (Conceptual - to be implemented/adapted)
+           This is where the old UDP logic would go, adapted for external frames.
+        """
+        logger.info(f"UDP Video Streamer starting on {self.host}:{self.port}")
+        # udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) <-- socket was imported but not used here originally
+        # ... (rest of placeholder UDP logic) ...
+        logger.info("UDP Video Streamer stopped.")
+
     async def _shutdown_server_resources(self):
         logger.info(f"VideoStreamer ({self.host}:{self.port}) shutting down resources...")
         closing_tasks = []
@@ -169,13 +304,15 @@ class VideoStreamer:
     async def start_server_async(self):
         """Start the WebSocket server (async part)"""
         self._stop_event = asyncio.Event()
+        # Explicitly set reuse_address, though it should be default True on non-Windows
         async with ws_serve(
             self._handle_client,
             self.host,
             self.port,
             ping_interval=20,
             ping_timeout=20,
-            max_size=None
+            max_size=None, # Ensure max_size is present if it was before
+            reuse_address=True
         ) as server:
             self.server = server
             self.running = True

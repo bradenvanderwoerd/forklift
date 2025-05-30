@@ -14,14 +14,15 @@ load_dotenv(env_path)
 # Server configuration
 SERVER_HOST = os.getenv("SERVER_HOST", "localhost")
 COMMAND_PORT = int(os.getenv("COMMAND_PORT", "3456"))  # Command WebSocket port
-VIDEO_PORT = int(os.getenv("VIDEO_PORT", "3457"))     # Video WebSocket port
+VIDEO_PORT = int(os.getenv("VIDEO_PORT", "3457"))     # Onboard Video WebSocket port
+OVERHEAD_VIDEO_PORT = int(os.getenv("OVERHEAD_VIDEO_PORT", "3458")) # Overhead Video WebSocket port
 
 # Log the configuration
-logger.info(f"Server configuration: HOST={SERVER_HOST}, COMMAND_PORT={COMMAND_PORT}, VIDEO_PORT={VIDEO_PORT}")
+logger.info(f"Server configuration: HOST={SERVER_HOST}, COMMAND_PORT={COMMAND_PORT}, VIDEO_PORT={VIDEO_PORT}, OVERHEAD_VIDEO_PORT={OVERHEAD_VIDEO_PORT}")
 
 # Video configuration
-VIDEO_WIDTH = 640
-VIDEO_HEIGHT = 480
+VIDEO_WIDTH = 1280
+VIDEO_HEIGHT = 720
 VIDEO_FPS = 30
 
 # Control configuration
