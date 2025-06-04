@@ -4,7 +4,7 @@ The ELEX 4699 Design Project is a 4-week course at BCIT in which students must d
 
 This GitHub contains the code and documentation for the forklift project completed by Braden Vanderwoerd and Jacob Edwards.
 
-## 1. Project Parameters
+## Project Parameters
 
 The shelves had three levels and were stocked with both black and white boxes. Students to deliver as many white and black boxes to respective dropoff shelves within 2.5 minutes. The packages were slightly rasied off the ground, making a forklift-type approach the most obvious and popular.
 
@@ -14,7 +14,7 @@ Packages had ArUco markers mounted on their front faces, and dropoff shelves had
 
 The robot was required to use a Raspberry Pi as the main control unit.
 
-## 2. Grading Scheme
+## Grading Scheme
 
 The project provided certain achievements that could be met to accumulate marks up to 100%.
 
@@ -30,11 +30,11 @@ The project provided certain achievements that could be met to accumulate marks 
     *   End of Week 4: PCB designed and built to mount on Raspberry Pi
 
 
-## 3. Solution Outline
+## Solution Outline
 
-## 3.1 Hardware
+### Hardware
 
 
 
-## f4. Future Considerations
+## Future Considerations
 
