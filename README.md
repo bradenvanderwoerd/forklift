@@ -1,111 +1,40 @@
-# Forklift
+# Forklift: ELEX 4699 Project
 
-A remote-controlled car robot project using Raspberry Pi, featuring real-time video streaming, motor control, and servo control capabilities.
+The ELEX 4699 Design Project is a 4-week course at BCIT in which students must design and build a robot to solve a given problem. In May 2025, the problem involved a 4-foot square arena  with pickup and dropoff shelves for packages. The students were required to build a robot to transport the packages within the arena within a certain time period.
 
-## Project Structure
+This GitHub contains the code and documentation for the forklift project completed by Braden Vanderwoerd and Jacob Edwards.
 
-```
-forklift/
-├── server/                 # Raspberry Pi server code
-│   ├── src/
-│   │   ├── controllers/    # Hardware controllers
-│   │   ├── network/       # Network handling
-│   │   ├── utils/         # Utility functions
-│   │   └── main.py        # Server entry point
-│   ├── requirements.txt
-│   └── README.md
-│
-├── client/                # macOS client code
-│   ├── src/
-│   │   ├── ui/           # User interface
-│   │   ├── network/      # Network handling
-│   │   ├── utils/        # Utility functions
-│   │   └── main.py       # Client entry point
-│   ├── requirements.txt
-│   └── README.md
-│
-└── shared/               # Shared code between client and server
-    ├── protocol/        # Network protocol definitions
-    └── utils/           # Shared utilities
-```
+## 1. Project Parameters
 
-## Development Setup
+The shelves had three levels and were stocked with both black and white boxes. Students to deliver as many white and black boxes to respective dropoff shelves within 2.5 minutes. The packages were slightly rasied off the ground, making a forklift-type approach the most obvious and popular.
 
-### On MacBook (Client Development)
+The arena included a starting zone that limited the size of the robot. It also had a birds-eye view camera mounted above that could be accessed by the robot through a TCP server socket.
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/forklift.git
-   cd forklift
-   ```
+Packages had ArUco markers mounted on their front faces, and dropoff shelves had markers on each package slot. The packages also had magnets set in their back faces that matched with the dropoff slots, making dropoff much easier.
 
-2. Set up client environment:
-   ```bash
-   cd client
-   python -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
+The robot was required to use a Raspberry Pi as the main control unit.
 
-3. Run the client:
-   ```bash
-   python src/main.py
-   ```
+## 2. Grading Scheme
 
-### On Raspberry Pi (Server Development)
+The project provided certain achievements that could be met to accumulate marks up to 100%.
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/forklift.git
-   cd forklift
-   ```
+*   **Teleoperation Delivery Demo (10% for first delivery, 5% for each additional)**
+    * To complete a teleoperation demo, the robot must be operated remotely by a user with no physical vision of the arena. The robot must deliver as many boxes as possible within 2.5 minutes.
 
-2. Set up server environment:
-   ```bash
-   cd server
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
+*   **Autonomous Delivery Demo (20% for first delivery, 10% for each additional)**
+    * To complete an autonomous demo, the robot must function without any human control. The robot must deliver as many boxes as possible within 2.5 minutes.
 
-3. Run the server:
-   ```bash
-   python src/main.py
-   ```
+*   **Milestones (15% each)**
+    *   End of Week 1: One teleoperation delivery (no time limit)
+    *   End of Week 2: One fully automatic delivery (no time limit)
+    *   End of Week 4: PCB designed and built to mount on Raspberry Pi
 
-## Development Workflow
 
-1. **Development on MacBook**:
-   - Make changes to both client and server code
-   - Test client code locally
-   - Commit and push changes to GitHub
+## 3. Solution Outline
 
-2. **Testing on Raspberry Pi**:
-   - Pull latest changes from GitHub
-   - Test server code with actual hardware
-   - Make any necessary adjustments
-   - Push changes back to GitHub
+## 3.1 Hardware
 
-## Contributing
 
-1. Create a feature branch:
-   ```bash
-   git checkout -b feature/your-feature
-   ```
 
-2. Make your changes and commit:
-   ```bash
-   git add .
-   git commit -m "Description of changes"
-   ```
+## f4. Future Considerations
 
-3. Push to GitHub:
-   ```bash
-   git push origin feature/your-feature
-   ```
-
-4. Create a pull request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details. 

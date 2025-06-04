@@ -3,13 +3,13 @@ import sys
 import time
 import threading
 import socket
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, Union
 import logging
 import asyncio
 import RPi.GPIO as GPIO
 import math
-import json # Added for JSON operations
-import cv2 # Import OpenCV for drawing
+import json
+import cv2
 import numpy as np
 import os
 
@@ -21,680 +21,755 @@ from .network.overhead_video_stream import OverheadStreamer
 from .network.tcp_server import CommandServer
 from .network.overhead_camera_client import WarehouseCameraClient
 from .localization.overhead_localizer import OverheadLocalizer
-from .utils.config import (
-    HOST, SERVER_TCP_PORT, SERVER_VIDEO_UDP_PORT, 
-    OVERHEAD_VIDEO_WEBSOCKET_PORT,
-    FORK_SERVO_A_PIN, FORK_SERVO_B_PIN, FORK_SERVO_C_PIN,
-    FORK_SERVO_D_PIN, FORK_SERVO_E_PIN, FORK_SERVO_F_PIN,
-    FORK_A_INITIAL_ANGLE, FORK_A_UP_ANGLE, FORK_A_DOWN_ANGLE,
-    FORK_B_INITIAL_ANGLE, FORK_B_UP_ANGLE, FORK_B_DOWN_ANGLE,
-    FORK_C_INITIAL_ANGLE, FORK_C_UP_ANGLE, FORK_C_DOWN_ANGLE,
-    FORK_D_INITIAL_ANGLE, FORK_D_UP_ANGLE, FORK_D_DOWN_ANGLE,
-    FORK_E_INITIAL_ANGLE, FORK_E_UP_ANGLE, FORK_E_DOWN_ANGLE,
-    FORK_F_INITIAL_ANGLE, FORK_F_UP_ANGLE, FORK_F_DOWN_ANGLE,
-    MANUAL_TURN_SPEED, FORK_DOWN_POSITION, FORK_UP_POSITION,
-    AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, AUTONAV_FORK_CARRY_ANGLE,
-    OVERHEAD_CAMERA_HOST, OVERHEAD_CAMERA_PORT,
-    # Assuming a default file path, can be moved to config.py if preferred
-)
+from .utils import config
 
 # Set up logging
 logging.basicConfig(
-    # level=logging.INFO, # Level will be set by getLogger().setLevel()
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-    ]
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
-logging.getLogger().setLevel(logging.INFO) # Set root logger level
-logger = logging.getLogger(__name__) # Get a logger for the current module
+logging.getLogger().setLevel(logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Auto-navigation Stages
 AUTONAV_STAGE_IDLE = "IDLE"
-AUTONAV_STAGE_NAVIGATING = "NAVIGATING"
-AUTONAV_STAGE_LOWERING_FORKS = "LOWERING_FORKS"
-AUTONAV_STAGE_LIFTING_FORKS = "LIFTING_FORKS"
-# AUTONAV_STAGE_CARRYING_BOX = "CARRYING_BOX" # Future state if needed
+AUTONAV_STAGE_NAV_TO_PICKUP = "NAV_TO_PICKUP"
+AUTONAV_STAGE_LOWER_FORKS_FOR_PICKUP = "LOWER_FORKS_FOR_PICKUP"
+AUTONAV_STAGE_PICKUP_DELAY = "PICKUP_DELAY"
+AUTONAV_STAGE_LIFT_FORKS_WITH_ITEM = "LIFT_FORKS_WITH_ITEM"
+AUTONAV_STAGE_NAV_TO_DROPOFF = "NAV_TO_DROPOFF"
+AUTONAV_STAGE_LOWER_FORKS_FOR_DROPOFF = "LOWER_FORKS_FOR_DROPOFF"
+AUTONAV_STAGE_DROPOFF_DELAY = "DROPOFF_DELAY"
+AUTONAV_STAGE_LIFT_FORKS_AFTER_DROPOFF = "LIFT_FORKS_AFTER_DROPOFF"
+AUTONAV_STAGE_COMPLETE = "COMPLETE"
 
-OVERHEAD_TARGETS_FILE = "overhead_targets.json" # Define path for targets file
+OVERHEAD_TARGETS_FILE = "overhead_targets.json"
 
-def check_port_availability(port: int, host: str = HOST) -> bool:
-    """Check if a port is available for use on a given host."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
+def check_port_availability(port: int, host: str = config.HOST) -> bool:
+    """Checks if a specified network port is available to bind to on the given host.
+
+    Args:
+        port: The port number to check.
+        host: The host address (IP) to check the port on.
+
+    Returns:
+        True if the port is available, False otherwise.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind((host, port))
             return True
-        except socket.error as e:
-            logger.error(f"Port check failed for {host}:{port} - {e}")
-            return False
+    except socket.error as e:
+        logger.error(f"ForkliftServer: Port check failed for {host}:{port} - {e}")
+        return False
 
 class ForkliftServer:
+    """Main server application for the Forklift robot.
+
+    This class orchestrates all components of the robot server, including:
+    - Hardware controllers (motors, servos, navigation).
+    - Network services for command reception and video streaming (onboard and overhead).
+    - Client for the external warehouse camera.
+    - Overhead localization using ArUco markers.
+    - Autonomous navigation state machine.
+    - Graceful startup and shutdown procedures.
+    """
     def __init__(self):
-        # GPIO setup - Call setmode and setwarnings once globally here
+        """Initializes the ForkliftServer and all its sub-components."""
+        logger.info("ForkliftServer: Initializing...")
+        
+        # --- Global GPIO Setup ---
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
 
-        self.running = True
-        self.cleanup_lock = threading.Lock()
-        self.cleanup_complete = threading.Event()
-        self.test_autonav_active = False # Flag for testing autonomous navigation
-        self.autonav_stage = AUTONAV_STAGE_IDLE # Current stage of auto-navigation
-        self.robot_overhead_pose: Optional[Tuple[float, float, float]] = None
-        self.overhead_target_poses: Dict[str, Optional[Tuple[float, float, float]]] = {
+        self.is_running = True
+        self._cleanup_in_progress_lock = threading.Lock()
+        self._cleanup_initiated = False
+        self.cleanup_complete_event = threading.Event()
+
+        self.autonav_active = False
+        self.autonav_current_stage = AUTONAV_STAGE_IDLE
+        self.autonav_stage_entry_time = 0.0
+
+        self.robot_overhead_pose_pixels: Optional[Tuple[float, float, float]] = None
+        self.overhead_target_poses_pixels: Dict[str, Optional[Tuple[float, float, float]]] = {
             "pickup": None,
             "dropoff": None
         }
-        self._load_overhead_target_poses() # Load poses at startup
+        self._load_overhead_target_poses()
 
-        # Load overhead camera calibration data
-        self.overhead_cam_mtx: Optional[np.ndarray] = None
-        self.overhead_cam_dist: Optional[np.ndarray] = None
-        self.new_overhead_cam_mtx: Optional[np.ndarray] = None # For undistortion
-        self.overhead_calibration_roi: Optional[Tuple[int, int, int, int]] = None # Region of interest
-        try:
-            # Construct the absolute path to the calibration file
-            script_dir = os.path.dirname(__file__) # server/src/
-            # Assuming overhead_camera_calibration.npz is in server/src/
-            calibration_file_path = os.path.join(script_dir, "overhead_camera_calibration.npz")
-            
-            if not os.path.exists(calibration_file_path):
-                logger.warning(f"Overhead camera calibration file NOT FOUND at {calibration_file_path}. Frames will not be undistorted.")
-            else:
-                with np.load(calibration_file_path) as data:
-                    self.overhead_cam_mtx = data['mtx']
-                    self.overhead_cam_dist = data['dist']
-                    logger.info(f"Successfully loaded overhead camera calibration data from {calibration_file_path}.")
-                    # You might want to refine the new camera matrix later if needed for cropping
-                    # For now, new_overhead_cam_mtx can be the same as overhead_cam_mtx or calculated for optimal view
-                    # h, w = image_shape_from_somewhere # Need image shape for getOptimalNewCameraMatrix
-                    # self.new_overhead_cam_mtx, self.overhead_calibration_roi = cv2.getOptimalNewCameraMatrix(
-                    #    self.overhead_cam_mtx, self.overhead_cam_dist, (w,h), 1, (w,h)
-                    # )
-                    # Using the original matrix for now, will result in an image cropped to valid pixels
-                    self.new_overhead_cam_mtx = self.overhead_cam_mtx 
-        except Exception as e:
-            logger.error(f"Error loading overhead camera calibration data: {e}. Frames will not be undistorted.", exc_info=True)
-            self.overhead_cam_mtx = None # Ensure it's None on error
-            self.overhead_cam_dist = None
-            self.new_overhead_cam_mtx = None
+        self.overhead_cam_matrix: Optional[np.ndarray] = None
+        self.overhead_cam_dist_coeffs: Optional[np.ndarray] = None
+        self.new_overhead_cam_matrix: Optional[np.ndarray] = None
+        self.overhead_calibration_roi: Optional[Tuple[int, int, int, int]] = None
+        self._load_overhead_camera_calibration()
+
+        if not check_port_availability(config.SERVER_TCP_PORT):
+            logger.critical(f"ForkliftServer: Command port {config.SERVER_TCP_PORT} is already in use! Exiting.")
+            sys.exit(1)
+        if not check_port_availability(config.SERVER_VIDEO_UDP_PORT):
+            logger.critical(f"ForkliftServer: Onboard video port {config.SERVER_VIDEO_UDP_PORT} is already in use! Exiting.")
+            sys.exit(1)
+        if not check_port_availability(config.OVERHEAD_VIDEO_WEBSOCKET_PORT):
+            logger.critical(f"ForkliftServer: Overhead video port {config.OVERHEAD_VIDEO_WEBSOCKET_PORT} is already in use! Exiting.")
+            sys.exit(1)
         
-        # Check port availability
-        if not check_port_availability(SERVER_TCP_PORT):
-            sys.exit(f"Command port {SERVER_TCP_PORT} is already in use!")
-        if not check_port_availability(SERVER_VIDEO_UDP_PORT):
-            sys.exit(f"Onboard video port {SERVER_VIDEO_UDP_PORT} is already in use!")
-        if not check_port_availability(OVERHEAD_VIDEO_WEBSOCKET_PORT):
-            sys.exit(f"Overhead video port {OVERHEAD_VIDEO_WEBSOCKET_PORT} is already in use!")
-        
-        # Initialize hardware controllers
         self.motor_controller = MotorController()
         self.navigation_controller = NavigationController(self.motor_controller)
 
-        # Initialize Servo Controllers
-        self.servos: Dict[int, ServoController] = {}
+        self.servo_controllers: Dict[int, ServoController] = {}
+        self._initialize_servo_controllers()
+        self.primary_fork_servo: Optional[ServoController] = self.servo_controllers.get(config.FORK_SERVO_A_PIN)
+        if self.primary_fork_servo:
+            logger.info(f"Primary fork servo (Pin {config.FORK_SERVO_A_PIN}) initialized to {self.primary_fork_servo.get_position():.1f} degrees.")
+        else:
+            logger.warning(f"Primary fork servo (Pin {config.FORK_SERVO_A_PIN}) not found after initialization. Autonav fork control will fail.")
+
+        self.warehouse_camera_client = WarehouseCameraClient(
+            host=config.OVERHEAD_CAMERA_HOST, 
+            port=config.OVERHEAD_CAMERA_PORT
+        )
+        self.overhead_localizer = OverheadLocalizer()
         
+        self.onboard_video_streamer = VideoStreamer(host=config.HOST, port=config.SERVER_VIDEO_UDP_PORT)
+        self.overhead_video_streamer = OverheadStreamer(host=config.HOST, port=config.OVERHEAD_VIDEO_WEBSOCKET_PORT)
+        self.command_receiver_server = CommandServer(host=config.HOST, port=config.SERVER_TCP_PORT)
+        
+        self._register_command_handlers()
+        
+        signal.signal(signal.SIGINT, self._signal_shutdown_handler)
+        signal.signal(signal.SIGTERM, self._signal_shutdown_handler)
+
+        self.onboard_video_thread = threading.Thread(target=self.onboard_video_streamer.start, name="OnboardVideoStreamThread", daemon=True)
+        self.overhead_video_thread = threading.Thread(target=self.overhead_video_streamer.start, name="OverheadVideoStreamThread", daemon=True)
+        self.command_receiver_thread = threading.Thread(target=self.command_receiver_server.start, name="CommandServerThread", daemon=True)
+        
+        logger.info("ForkliftServer: Initialization complete.")
+
+    def _load_overhead_camera_calibration(self):
+        """Loads overhead camera calibration data (matrix and distortion coeffs)
+        from the file specified in `config.OVERHEAD_CAMERA_CALIBRATION_FILE_PATH`.
+        This data is used for undistorting raw frames from the warehouse camera.
+        """
+        try:
+            calib_file_path = config.OVERHEAD_CAMERA_CALIBRATION_FILE_PATH
+            if not os.path.isabs(calib_file_path):
+                script_dir = os.path.dirname(__file__)
+                calib_file_path = os.path.join(script_dir, calib_file_path)
+
+            if not os.path.exists(calib_file_path):
+                logger.warning(f"ForkliftServer: Overhead camera calibration file NOT FOUND at {calib_file_path}. Frames will not be undistorted.")
+                return
+
+            with np.load(calib_file_path) as data:
+                self.overhead_cam_matrix = data['mtx']
+                self.overhead_cam_dist_coeffs = data['dist']
+                logger.info(f"ForkliftServer: Successfully loaded overhead camera calibration from {calib_file_path}.")
+                
+                self.new_overhead_cam_matrix = self.overhead_cam_matrix
+        except FileNotFoundError:
+            logger.warning(f"ForkliftServer: Overhead camera calibration file specified but not found at {config.OVERHEAD_CAMERA_CALIBRATION_FILE_PATH}.")
+        except Exception as e:
+            logger.error(f"ForkliftServer: Error loading overhead camera calibration data: {e}. Frames will not be undistorted.", exc_info=True)
+            self.overhead_cam_matrix = None
+            self.overhead_cam_dist_coeffs = None
+            self.new_overhead_cam_matrix = None
+            self.overhead_calibration_roi = None
+        
+    def _initialize_servo_controllers(self):
+        """Initializes all configured servo controllers based on settings in `config.py`."""
         servo_configs = {
-            "fork_a": {"pin": FORK_SERVO_A_PIN, "initial": FORK_A_INITIAL_ANGLE, "up": FORK_A_UP_ANGLE, "down": FORK_A_DOWN_ANGLE},
-            "fork_b": {"pin": FORK_SERVO_B_PIN, "initial": FORK_B_INITIAL_ANGLE, "up": FORK_B_UP_ANGLE, "down": FORK_B_DOWN_ANGLE},
-            "fork_c": {"pin": FORK_SERVO_C_PIN, "initial": FORK_C_INITIAL_ANGLE, "up": FORK_C_UP_ANGLE, "down": FORK_C_DOWN_ANGLE},
-            "fork_d": {"pin": FORK_SERVO_D_PIN, "initial": FORK_D_INITIAL_ANGLE, "up": FORK_D_UP_ANGLE, "down": FORK_D_DOWN_ANGLE},
-            "fork_e": {"pin": FORK_SERVO_E_PIN, "initial": FORK_E_INITIAL_ANGLE, "up": FORK_E_UP_ANGLE, "down": FORK_E_DOWN_ANGLE},
-            "fork_f": {"pin": FORK_SERVO_F_PIN, "initial": FORK_F_INITIAL_ANGLE, "up": FORK_F_UP_ANGLE, "down": FORK_F_DOWN_ANGLE},
+            "A": (config.FORK_SERVO_A_PIN, config.FORK_A_INITIAL_ANGLE, config.FORK_A_UP_ANGLE, config.FORK_A_DOWN_ANGLE),
+            "B": (config.FORK_SERVO_B_PIN, config.FORK_B_INITIAL_ANGLE, config.FORK_B_UP_ANGLE, config.FORK_B_DOWN_ANGLE),
+            "C": (config.FORK_SERVO_C_PIN, config.FORK_C_INITIAL_ANGLE, config.FORK_C_UP_ANGLE, config.FORK_C_DOWN_ANGLE),
+            "D": (config.FORK_SERVO_D_PIN, config.FORK_D_INITIAL_ANGLE, config.FORK_D_UP_ANGLE, config.FORK_D_DOWN_ANGLE),
+            "E": (config.FORK_SERVO_E_PIN, config.FORK_E_INITIAL_ANGLE, config.FORK_E_UP_ANGLE, config.FORK_E_DOWN_ANGLE),
+            "F": (config.FORK_SERVO_F_PIN, config.FORK_F_INITIAL_ANGLE, config.FORK_F_UP_ANGLE, config.FORK_F_DOWN_ANGLE),
         }
 
-        for name, config in servo_configs.items():
+        for name, params in servo_configs.items():
+            pin, initial, up_pos, down_pos = params
             try:
                 controller = ServoController(
-                    pin_number=config["pin"],
-                    initial_position_degrees=config["initial"],
-                    defined_up_angle=config["up"],
-                    defined_down_angle=config["down"]
+                    pin_number=pin,
+                    initial_position_degrees=initial,
+                    defined_up_angle=up_pos,
+                    defined_down_angle=down_pos
                 )
-                self.servos[config["pin"]] = controller
-                logger.info(f"Initialized servo '{name}' on pin {config['pin']} with Initial: {config['initial']}, Up: {config['up']}, Down: {config['down']}")
+                self.servo_controllers[pin] = controller
+                logger.info(f"ForkliftServer: Initialized servo '{name}' on pin {pin} (Initial: {initial}°, Up: {up_pos}°, Down: {down_pos}°)")
             except Exception as e:
-                logger.error(f"Failed to initialize servo '{name}' on pin {config['pin']}: {e}", exc_info=True)
-        
-        self.primary_fork_servo: Optional[ServoController] = self.servos.get(FORK_SERVO_A_PIN)
-
-        # Initialize Overhead Camera Client
-        self.overhead_camera_client = WarehouseCameraClient(
-            host=OVERHEAD_CAMERA_HOST, 
-            port=OVERHEAD_CAMERA_PORT
-        )
-        # Initialize Overhead Localizer
-        self.overhead_localizer = OverheadLocalizer()
-        # Explicitly set to FORK_DOWN_POSITION (80) on startup - This was for the old primary fork logic
-        # The new primary_fork_servo is already initialized to FORK_A_INITIAL_ANGLE from its config.
-        # If FORK_A_INITIAL_ANGLE is different from where autonav expects it, adjustments might be needed here
-        # or ensure FORK_A_INITIAL_ANGLE is FORK_DOWN_POSITION if that assumption holds for startup.
-        # Current config has FORK_A_INITIAL_ANGLE = FORK_DOWN_POSITION, so this is fine.
-        if self.primary_fork_servo: 
-            logger.info(f"Primary fork servo (A) initialized to {self.primary_fork_servo.get_position()} deg based on its config.")
-        else:
-            logger.warning("Primary fork servo (A) not found after initialization.")
-        
-        # Initialize network components, passing configured host and ports
-        self.video_streamer = VideoStreamer(host=HOST, port=SERVER_VIDEO_UDP_PORT)
-        self.overhead_video_streamer = OverheadStreamer(host=HOST, port=OVERHEAD_VIDEO_WEBSOCKET_PORT)
-        self.command_server = CommandServer(host=HOST, port=SERVER_TCP_PORT)
-        
-        # Register command handlers
-        self._register_handlers()
-        
-        # Setup signal handlers
-        signal.signal(signal.SIGINT, self._handle_shutdown)
-        signal.signal(signal.SIGTERM, self._handle_shutdown)
-        
-        # Create threads for servers
-        self.video_thread = threading.Thread(target=self._run_video_server, name="OnboardVideoStreamThread")
-        self.video_thread.daemon = True # Set as daemon
-
-        self.overhead_video_thread = threading.Thread(target=self._run_overhead_video_server, name="OverheadVideoStreamThread")
-        self.overhead_video_thread.daemon = True # Set as daemon
-
-        self.command_thread = threading.Thread(target=self._run_command_server, name="CommandServerThread")
-        self.command_thread.daemon = True # Set as daemon
-        
-        # Overhead camera client manages its own thread (already daemon), started by connect()
+                logger.error(f"ForkliftServer: Failed to initialize servo '{name}' on pin {pin}: {e}", exc_info=True)
     
-    def _register_handlers(self):
-        """Register command handlers"""
-        self.command_server.register_handler('drive', self._handle_drive_command)
-        self.command_server.register_handler('servo', self._handle_servo_command)
-        self.command_server.register_handler('stop', self._handle_emergency_stop)
-        self.command_server.register_handler('TOGGLE_AUTONAV', self._handle_toggle_autonav_command)
-        self.command_server.register_handler('SET_NAV_TURNING_PID', self._handle_set_nav_turning_pid)
-        self.command_server.register_handler('SET_NAV_DISTANCE_PID', self._handle_set_nav_distance_pid)
-        self.command_server.register_handler('SET_OVERHEAD_TARGET', self._handle_set_overhead_target)
-        self.command_server.register_handler('SET_SPEED', self._handle_set_speed_command)
+    def _register_command_handlers(self):
+        """Registers handler methods for commands received by the `CommandServer`."""
+        self.command_receiver_server.register_handler('drive', self._handle_drive_command)
+        self.command_receiver_server.register_handler('servo', self._handle_servo_command)
+        self.command_receiver_server.register_handler('stop_all', self._handle_emergency_stop_command)
+        self.command_receiver_server.register_handler('toggle_autonav', self._handle_toggle_autonav_command)
+        self.command_receiver_server.register_handler('set_nav_pid', self._handle_set_nav_pid_command)
+        self.command_receiver_server.register_handler('set_overhead_target', self._handle_set_overhead_target_command)
+        self.command_receiver_server.register_handler('set_speed_limits', self._handle_set_speed_limits_command)
+        logger.info("ForkliftServer: Command handlers registered.")
     
     def _handle_drive_command(self, data: Dict[str, Any]):
-        if self.test_autonav_active:
-            logger.info("Auto-nav active, drive command ignored.")
+        """Handles 'drive' commands for manual motor control.
+        Payload expected: {"direction": "FORWARD"/"BACKWARD"/"LEFT"/"RIGHT"/"NONE", "speed": 0-100, "action": "START"/"STOP"}
+        If autonav is active, manual drive commands are ignored.
+        """
+        if self.autonav_active:
+            logger.info("ForkliftServer: Autonav active, manual drive command ignored.")
             return
-        logger.debug(f"Received DRIVE command data: {data}")
-        command_value = data.get("value", {})
-        direction = command_value.get("direction")
-        speed = command_value.get("speed")
-        action = command_value.get("action", "START")
+        
+        logger.debug(f"ForkliftServer: Received DRIVE command: {data}")
+        direction = data.get("direction", "NONE").upper()
+        speed = data.get("speed", config.MANUAL_DRIVE_SPEED)
+        action = data.get("action", "START").upper()
 
-        if action == "STOP" or (direction and direction.upper() == "NONE"):
+        if action == "STOP" or direction == "NONE":
             self.motor_controller.stop()
-            logger.info("Drive command: STOP")
-        elif direction and speed is not None:
-            logger.info(f"Drive command: {direction} at speed {speed}")
+            logger.info("ForkliftServer: Drive command: STOP/NONE - Motors stopped.")
+        elif direction and isinstance(speed, (int, float)) and 0 <= speed <= 100:
+            logger.info(f"ForkliftServer: Drive command: {action} {direction} at speed {speed}")
             if direction == "FORWARD":
-                self.motor_controller.drive_forward(speed)
+                self.motor_controller.drive_forward(int(speed))
             elif direction == "BACKWARD":
-                self.motor_controller.drive_backward(speed)
+                self.motor_controller.drive_backward(int(speed))
             elif direction == "LEFT":
-                self.motor_controller.turn_left(speed)
+                self.motor_controller.turn_left(int(speed))
             elif direction == "RIGHT":
-                self.motor_controller.turn_right(speed)
-        elif speed is not None and direction is None and action == "UPDATE_SPEED_ONLY":
-             logger.info(f"Received deprecated speed update via drive cmd: {speed}. Use SET_SPEED.")
+                self.motor_controller.turn_right(int(speed))
+            elif direction == "MOVE" and "forward_component" in data and "turn_component" in data:
+                 fwd = int(data.get("forward_component", 0))
+                 trn = int(data.get("turn_component", 0))
+                 self.motor_controller.move(forward_component=fwd, turn_component=trn)
+                 logger.info(f"ForkliftServer: Drive command: MOVE Fwd:{fwd}, Trn:{trn}")
+            else:
+                logger.warning(f"ForkliftServer: Unknown drive direction '{direction}' or invalid MOVE payload in command: {data}")
         else:
-            logger.warning(f"Unknown drive command or missing parameters: {data}")
+            logger.warning(f"ForkliftServer: Invalid drive command payload (missing direction/speed, or speed out of range): {data}")
     
     def _handle_servo_command(self, data: Dict[str, Any]):
-        logger.debug(f"Received SERVO command: {data}")
-        value = data.get("value", {})
-        position = value.get('position')
-        action = value.get("action", "SET")
-        
-        # Determine target servo. Default to FORK_SERVO_A_PIN if not specified.
-        target_pin = value.get('pin', FORK_SERVO_A_PIN) 
-        
-        servo_to_control = self.servos.get(target_pin)
+        """Handles 'servo' commands for controlling individual servos.
+        Payload expected: {"pin": <servo_pin_BCM>, "action": "UP"/"DOWN"/"SET_ANGLE", "angle": <degrees_if_SET_ANGLE>}
+        """
+        logger.debug(f"ForkliftServer: Received SERVO command: {data}")
+        target_pin = data.get('pin')
+        action = data.get("action", "").upper()
+        angle = data.get("angle")
 
+        if target_pin is None:
+            logger.warning("ForkliftServer: Servo command missing 'pin'. Ignoring.")
+            return
+
+        servo_to_control = self.servo_controllers.get(target_pin)
         if not servo_to_control:
-            logger.error(f"Servo command for unconfigured pin {target_pin}. Available pins: {list(self.servos.keys())}")
+            logger.warning(f"ForkliftServer: No servo controller found for pin {target_pin}. Ignoring command.")
             return
 
-        logger.info(f"Targeting servo on pin {target_pin} with command: {value}")
-
-        if action == "SET" and position is not None:
+        if action == "UP":
+            logger.info(f"ForkliftServer: Servo on pin {target_pin} command: UP")
+            servo_to_control.go_to_up_position()
+        elif action == "DOWN":
+            logger.info(f"ForkliftServer: Servo on pin {target_pin} command: DOWN")
+            servo_to_control.go_to_down_position()
+        elif action == "SET_ANGLE" and angle is not None:
             try:
-                servo_to_control.set_position(float(position))
+                angle_deg = float(angle)
+                logger.info(f"ForkliftServer: Servo on pin {target_pin} command: SET_ANGLE to {angle_deg}°")
+                servo_to_control.set_position(angle_deg)
             except ValueError:
-                logger.error(f"Invalid servo position: {position} for pin {target_pin}")
-        elif value.get('step_up'): # This will now be a 2-degree step for the targeted servo
-            servo_to_control.go_to_up_position() # Assumes 2-degree step is implemented in ServoController
-        elif value.get('step_down'): # This will now be a 2-degree step
-            servo_to_control.go_to_down_position() # Assumes 2-degree step is implemented in ServoController
+                logger.warning(f"ForkliftServer: Invalid angle '{angle}' for SET_ANGLE on pin {target_pin}. Must be a number.")
+        elif action == "STOP_PULSES":
+             logger.info(f"ForkliftServer: Servo on pin {target_pin} command: STOP_PULSES")
+             servo_to_control.stop_pwm()
         else:
-            logger.warning(f"Unknown servo action or missing position in command for pin {target_pin}: {value}")
-    
-    def _handle_emergency_stop(self, data: Dict[str, Any]):
-        """Handle emergency stop command"""
-        logger.info("EMERGENCY STOP received.")
+            logger.warning(f"ForkliftServer: Unknown servo action '{action}' or missing angle for SET_ANGLE on pin {target_pin}. Data: {data}")
+
+    def _handle_emergency_stop_command(self, data: Dict[str, Any]):
+        """Handles 'stop_all' command for emergency stop.
+        Stops motors, cancels autonav, and could potentially stop servos.
+        Payload: Not strictly required, but can be empty {}.
+        """
+        logger.critical(f"ForkliftServer: EMERGENCY STOP command received! Data: {data}")
+        if self.autonav_active:
+            logger.info("ForkliftServer: Autonav was active, cancelling due to emergency stop.")
+            self.autonav_active = False
+            self.autonav_current_stage = AUTONAV_STAGE_IDLE
+            self.navigation_controller.clear_target()
+        
         self.motor_controller.stop()
-        if self.test_autonav_active:
-            self.test_autonav_active = False
-            self.autonav_stage = AUTONAV_STAGE_IDLE
-            logger.info("Autonomous navigation DEACTIVATED by E-Stop.")
         
-        # Stop navigation controller
-        if hasattr(self, 'navigation_controller') and self.navigation_controller:
-            self.navigation_controller.clear_target() # Stops motors and clears nav target
-        else:
-            # Fallback if navigation_controller somehow not present, directly stop motors
-            self.motor_controller.stop()
-        
-        # self.servo_controller.set_position(0) # Optional: reset servo on e-stop. Current plan doesn't specify this.
-        logger.info("Emergency stop: All motor activity should cease.")
-    
+        logger.info("ForkliftServer: Motors stopped due to emergency stop. Autonav cancelled if active.")
+
     def _handle_toggle_autonav_command(self, data: Dict[str, Any]):
-        """Handles the command to toggle autonomous navigation test mode."""
-        self.test_autonav_active = not self.test_autonav_active
-        if self.test_autonav_active:
-            logger.info(f"Autonomous navigation ACTIVATED.")
-            # Attempt to set the 'pickup' pose as the initial target
-            pickup_target_pose = self.overhead_target_poses.get("pickup")
-            if pickup_target_pose:
-                self.navigation_controller.set_target(pickup_target_pose)
-                self.autonav_stage = AUTONAV_STAGE_NAVIGATING # Set stage only if target is successfully set
-                logger.info(f"Initial target set to 'pickup'. Stage: {self.autonav_stage}")
-            else:
-                logger.warning("AutoNav activated, but no 'pickup' target pose is set. Robot will not navigate.")
-                self.autonav_stage = AUTONAV_STAGE_IDLE # Remain idle if no target
-                self.test_autonav_active = False # Immediately turn off autonav if no target can be set.
-                # self.motor_controller.stop() # Ensure motors are stopped. Already handled by clear_target if called.
-        else:
-            self.autonav_stage = AUTONAV_STAGE_IDLE
-            logger.info(f"Autonomous navigation DEACTIVATED.")
-            if hasattr(self, 'navigation_controller') and self.navigation_controller:
-                self.navigation_controller.clear_target() # Stops motors and resets NavController
-            logger.info("Setting servo to FORK_DOWN_POSITION on auto-nav deactivation.")
-            if self.primary_fork_servo: # Ensure primary_fork_servo was initialized
-                self.primary_fork_servo.set_position(FORK_DOWN_POSITION, blocking=False) # Set fork servo position
-    
-    def _handle_set_nav_turning_pid(self, data: Dict[str, Any]):
-        """Handles command to set turning PID gains for NavigationController."""
-        if not hasattr(self, 'navigation_controller') or not self.navigation_controller:
-            logger.error("NavigationController not available to set PID gains.")
-            return
+        """Handles 'toggle_autonav' command to start or stop the autonomous navigation sequence.
+        Payload expected: {"target": "pickup" or "dropoff"} when starting.
+                         Can be empty {} to stop current autonav.
+        """
+        target_location_name = data.get("target", "pickup").lower()
         
-        pid_values = data.get("value", {})
-        try:
-            kp, ki, kd = float(pid_values["kp"]), float(pid_values["ki"]), float(pid_values["kd"])
-            self.navigation_controller.update_turning_pid_gains(kp, ki, kd)
-            logger.info(f"Turning PID updated: Kp={kp}, Ki={ki}, Kd={kd}")
-        except (TypeError, ValueError, KeyError) as e:
-            logger.error(f"Invalid turning PID values: {pid_values}. Error: {e}")
-
-    def _handle_set_nav_distance_pid(self, data: Dict[str, Any]):
-        """Handles command to set distance PID gains for NavigationController."""
-        if not hasattr(self, 'navigation_controller') or not self.navigation_controller:
-            logger.error("NavigationController not available to set PID gains.")
-            return
-        
-        pid_values = data.get("value", {})
-        try:
-            kp, ki, kd = float(pid_values["kp"]), float(pid_values["ki"]), float(pid_values["kd"])
-            self.navigation_controller.update_distance_pid_gains(kp, ki, kd)
-            logger.info(f"Distance PID updated: Kp={kp}, Ki={ki}, Kd={kd}")
-        except (TypeError, ValueError, KeyError) as e:
-            logger.error(f"Invalid distance PID values: {pid_values}. Error: {e}")
-
-    def _handle_set_overhead_target(self, data: Dict[str, Any]):
-        """Handles command to set an overhead target pose (pickup or dropoff)."""
-        target_name = data.get("value", {}).get("target_name")
-        
-        if not target_name or target_name not in self.overhead_target_poses:
-            logger.warning(f"Invalid or missing target_name for SET_OVERHEAD_TARGET: {target_name}. Expected 'pickup' or 'dropoff'.")
-            return
-
-        if self.robot_overhead_pose is not None:
-            self.overhead_target_poses[target_name] = self.robot_overhead_pose
-            px, py, ptheta_deg = self.robot_overhead_pose[0], self.robot_overhead_pose[1], math.degrees(self.robot_overhead_pose[2])
-            logger.info(f"Overhead target '{target_name}' SET to current robot pose: X={px:.0f}, Y={py:.0f}, Theta={ptheta_deg:.1f}°")
-            self._save_overhead_target_poses() # Save after setting
-        else:
-            logger.warning(f"Could not set overhead target '{target_name}': Robot overhead pose is currently not detected.")
-    
-    def _handle_set_speed_command(self, data: Dict[str, Any]):
-        """Handles the SET_SPEED command from the client's speed slider."""
-        if self.test_autonav_active:
-            logger.info("Auto-nav active, SET_SPEED command ignored.")
-            return
-        
-        speed_value = data.get("value")
-        if speed_value is not None:
-            try:
-                speed = int(speed_value)
-                if 0 <= speed <= 100:
-                    # self.motor_controller.set_speed(speed) # This call is now redundant
-                    logger.info(f"SET_SPEED command received with value {speed}. Speed is applied with drive commands.")
-                else:
-                    logger.warning(f"Invalid speed value for SET_SPEED: {speed}. Must be 0-100.")
-            except ValueError:
-                logger.error(f"Invalid speed format for SET_SPEED: {speed_value}.")
-        else:
-            logger.warning("SET_SPEED command received without a 'value'.")
-    
-    def _run_video_server(self):
-        """Run video server in a separate thread"""
-        try:
-            self.video_streamer.start()
-        except Exception as e:
-            logger.error(f"Error in onboard video server thread: {e}")
-            self.running = False
-    
-    def _run_overhead_video_server(self):
-        logger.info("Overhead video server thread starting...")
-        try:
-            # The OverheadStreamer's start() method handles its own asyncio loop and server setup.
-            self.overhead_video_streamer.start()
-        except Exception as e:
-            logger.error(f"Exception in _run_overhead_video_server: {e}", exc_info=True)
-            self.running = False # Signal main loop to stop if this thread fails critically
-        finally:
-            logger.info("Overhead video server thread finished.")
-    
-    def _run_command_server(self):
-        """Run command server in a separate thread"""
-        try:
-            self.command_server.start()
-        except Exception as e:
-            logger.error(f"Error in command server thread: {e}")
-            self.running = False
-    
-    def _handle_shutdown(self, signum, frame):
-        """Handle shutdown signal"""
-        logger.info(f"Shutdown signal {signum} received. Telling main loop to stop...")
-        self.running = False
-    
-    def start(self):
-        """Start server components"""
-        logger.info("Starting ForkliftServer...")
-        logger.info(f"Command server on {HOST}:{SERVER_TCP_PORT}")
-        logger.info(f"Onboard Video (PiCam) on ws://{HOST}:{SERVER_VIDEO_UDP_PORT}")
-        logger.info(f"Overhead Video (Warehouse) on ws://{HOST}:{OVERHEAD_VIDEO_WEBSOCKET_PORT}")
-        
-        # Variables for tracking overhead camera FPS on Pi
-        self.overhead_frames_received_count = 0
-        self.last_overhead_log_time = time.time()
-        self.log_interval_seconds = 5.0 # Log FPS every 5 seconds
-        
-        try:
-            self.video_thread.start()
-            self.overhead_video_thread.start()
-            self.command_thread.start()
-            self.overhead_camera_client.connect() # Start the overhead camera client thread
-            
-            logger.info("ForkliftServer main loop started. Use TOGGLE_AUTONAV command to test navigation.")
-
-            while self.running:
-                raw_overhead_frame = self.overhead_camera_client.get_video_frame()
-                
-                # --- Frame Undistortion --- 
-                if raw_overhead_frame is not None and self.overhead_cam_mtx is not None and self.overhead_cam_dist is not None and self.new_overhead_cam_mtx is not None:
-                    # Undistort the frame
-                    # Using new_overhead_cam_mtx (which is same as original mtx for now) for undistortion crop
-                    undistorted_frame = cv2.undistort(raw_overhead_frame, self.overhead_cam_mtx, self.overhead_cam_dist, None, self.new_overhead_cam_mtx)
-                    # Optional: crop the image using ROI if getOptimalNewCameraMatrix was used and ROI is valid
-                    # if self.overhead_calibration_roi:
-                    #     x, y, w, h = self.overhead_calibration_roi
-                    #     undistorted_frame = undistorted_frame[y:y+h, x:x+w]
-                    current_frame_to_process = undistorted_frame
-                    # logger.debug("Overhead frame undistorted.")
-                elif raw_overhead_frame is not None:
-                    # No calibration data, use raw frame
-                    current_frame_to_process = raw_overhead_frame
-                    # logger.debug("Using raw overhead frame (no undistortion).")
-                else:
-                    # No frame received
-                    current_frame_to_process = None
-                # --- End Frame Undistortion ---
-
-                processed_overhead_frame = None # Frame to be sent to streamer, starts as None
-
-                if current_frame_to_process is not None:
-                    self.overhead_frames_received_count += 1
-                    
-                    # detect_robot_pose now returns (r_x, r_y, m_theta_rad, m_x, m_y) or None
-                    # It will process the (potentially) undistorted current_frame_to_process
-                    full_pose_data = self.overhead_localizer.detect_robot_pose(current_frame_to_process)
-                    
-                    if full_pose_data is not None:
-                        r_x, r_y, m_theta_rad, _, _ = full_pose_data 
-                        self.robot_overhead_pose = (r_x, r_y, m_theta_rad)
-                        
-                        # Draw all pose indicators on a copy of the current_frame_to_process
-                        processed_overhead_frame = self.overhead_localizer.draw_pose_on_frame(current_frame_to_process.copy(), full_pose_data)
-                    else:
-                        self.robot_overhead_pose = None
-                        processed_overhead_frame = current_frame_to_process # Send the (potentially) undistorted frame even if no pose
-
-                    if processed_overhead_frame is not None:
-                        pickup_target = self.overhead_target_poses.get("pickup")
-                        if pickup_target:
-                            center_x = int(pickup_target[0])
-                            center_y = int(pickup_target[1])
-                            if processed_overhead_frame is current_frame_to_process and not full_pose_data: # Drawing on a frame not yet copied
-                                processed_overhead_frame = current_frame_to_process.copy()
-                            cv2.circle(processed_overhead_frame, (center_x, center_y), 10, (0, 255, 255), 2) # Yellow target circle
-
-                    if processed_overhead_frame is not None:
-                        self.overhead_video_streamer.set_frame(processed_overhead_frame)
-                    elif current_frame_to_process is not None: # If pose detection failed but we have an undistorted frame
-                        self.overhead_video_streamer.set_frame(current_frame_to_process) 
-                    
-                # Autonomous navigation logic (uses self.robot_overhead_pose which is from undistorted frame)
-                if self.test_autonav_active:
-                    # Autonomous navigation logic using overhead camera pose
-                    current_overhead_pose_from_server = self.robot_overhead_pose # Use the continuously updated pose
-                    
-                    if self.autonav_stage == AUTONAV_STAGE_NAVIGATING:
-                        if current_overhead_pose_from_server and self.navigation_controller.current_target_pixel_pose:
-                            # Target is already set in NavController when autonav was enabled
-                            # navigate() returns True if target is reached, False otherwise.
-                            is_target_reached = self.navigation_controller.navigate(current_overhead_pose_from_server)
-
-                            if is_target_reached: # Target reached according to NavigationController
-                                logger.info("AutoNav (NAVIGATING): Target Reached! Transitioning to LOWERING_FORKS.")
-                                # NavigationController should have already stopped motors.
-                                # self.navigation_controller.clear_target() # Clear NavController's internal target for safety / next run.
-                                self.autonav_stage = AUTONAV_STAGE_LOWERING_FORKS
-                            # else: still navigating
-                        
-                        elif not current_overhead_pose_from_server:
-                            logger.warning("AutoNav (NAVIGATING): Robot overhead pose not available. Stopping motion.")
-                            self.motor_controller.stop() # Stop motors if pose is lost
-                            # self.navigation_controller.clear_target() # Optionally clear NavController target
-                        elif not self.navigation_controller.current_target_pixel_pose:
-                            logger.warning("AutoNav (NAVIGATING): NavigationController has no target set. Stopping motion.")
-                            self.motor_controller.stop()
-                            # Consider deactivating autonav or setting to IDLE if target is unexpectedly lost from NavController
-                            # self.test_autonav_active = False 
-                            # self.autonav_stage = AUTONAV_STAGE_IDLE
-
-                    elif self.autonav_stage == AUTONAV_STAGE_LOWERING_FORKS:
-                        logger.info(f"AutoNav: Stage LOWERING_FORKS. Lowering forks to {AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE} deg.")
-                        if self.primary_fork_servo: # Check if primary_fork_servo exists
-                            self.primary_fork_servo.set_position(AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE, blocking=True)
-                        else:
-                            logger.error("Primary fork servo (A) not initialized, cannot lower for autonav.")
-                        logger.info("AutoNav: Forks lowered. Simulating pickup (delay 1s). Transition: LOWERING_FORKS -> LIFTING_FORKS")
-                        time.sleep(1.0) # Simulate pickup time
-                        self.autonav_stage = AUTONAV_STAGE_LIFTING_FORKS
-
-                    elif self.autonav_stage == AUTONAV_STAGE_LIFTING_FORKS:
-                        logger.info(f"AutoNav: Stage LIFTING_FORKS. Lifting forks to {AUTONAV_FORK_CARRY_ANGLE} deg.")
-                        if self.primary_fork_servo: # Check if primary_fork_servo exists
-                            self.primary_fork_servo.set_position(AUTONAV_FORK_CARRY_ANGLE, blocking=True)
-                        else:
-                            logger.error("Primary fork servo (A) not initialized, cannot lift for autonav.")
-                        logger.info("AutoNav: Forks lifted. Sequence complete. Transition: LIFTING_FORKS -> IDLE")
-                        self.autonav_stage = AUTONAV_STAGE_IDLE 
-                        # To re-run, user must toggle autonav off then on, or logic for re-engaging NAVIGATING from IDLE would be needed.
-
-                    elif self.autonav_stage == AUTONAV_STAGE_IDLE:
-                        # logger.debug("AutoNav: Stage IDLE. Waiting for commands or new target acquisition if autonav is toggled.")
-                        pass
-                
-                else: # self.test_autonav_active is False
-                    if self.autonav_stage != AUTONAV_STAGE_IDLE:
-                        logger.warning(f"Autonav not active, but stage was {self.autonav_stage}. Resetting to IDLE and stopping nav.")
-                        if hasattr(self, 'navigation_controller') and self.navigation_controller:
-                            self.navigation_controller.clear_target()
-                        self.autonav_stage = AUTONAV_STAGE_IDLE
-                        
-                time.sleep(0.02) # Main loop tick rate (50Hz)
-                
-        except KeyboardInterrupt:
-            logger.info("\nKeyboard interrupt (Ctrl+C) received. Initiating shutdown...")
-            self.running = False # Ensure running is false, though signal handler should also do this
-        finally:
-            logger.info("ForkliftServer._run_main_loop_async.finally: Main loop ended or exception. Ensuring motors stopped.")
+        if self.autonav_active:
+            logger.info("ForkliftServer: TOGGLE_AUTONAV received. Autonav is active, attempting to stop.")
+            self.autonav_active = False
+            self.autonav_current_stage = AUTONAV_STAGE_IDLE
             self.motor_controller.stop()
-            if hasattr(self, 'servos'):
-                logger.info("ForkliftServer._run_main_loop_async.finally: Cleaning up servo controllers.")
-                for pin, servo_controller_instance in self.servos.items():
-                    try:
-                        logger.info(f"Cleaning up servo on pin {pin}...")
-                        servo_controller_instance.cleanup()
-                    except Exception as e:
-                        logger.error(f"Error cleaning up servo on pin {pin}: {e}", exc_info=True)
-            
-            # Disconnect overhead camera client
-            if self.overhead_camera_client:
-                logger.info("ForkliftServer cleanup: Disconnecting overhead camera client.")
-                self.overhead_camera_client.disconnect()
+            self.navigation_controller.clear_target()
+            logger.info("ForkliftServer: Autonomous navigation stopped by command.")
+        else:
+            logger.info(f"ForkliftServer: TOGGLE_AUTONAV received. Attempting to start autonav to '{target_location_name}'.")
+            if target_location_name not in self.overhead_target_poses_pixels or \
+               self.overhead_target_poses_pixels[target_location_name] is None:
+                logger.error(f"ForkliftServer: Cannot start autonav. Target '{target_location_name}' pose not defined.")
+                return
 
-            logger.info("Main loop terminated. Proceeding to cleanup...")
-            self.cleanup() # Primary call to cleanup
-            # Wait for cleanup to complete before exiting application context
-            if not self.cleanup_complete.wait(timeout=10.0): # Increased timeout
-                logger.warning("Cleanup did not complete in the allotted time.")
-            logger.info("ForkliftServer application shutdown sequence finished.")
+            if self.robot_overhead_pose_pixels is None:
+                logger.error("ForkliftServer: Cannot start autonav. Current robot pose unknown.")
+                return
+
+            self.autonav_active = True
+            if target_location_name == "pickup":
+                self.autonav_current_stage = AUTONAV_STAGE_NAV_TO_PICKUP
+                target_pose_for_nav = self.overhead_target_poses_pixels["pickup"]
+            elif target_location_name == "dropoff":
+                self.autonav_current_stage = AUTONAV_STAGE_NAV_TO_DROPOFF
+                target_pose_for_nav = self.overhead_target_poses_pixels["dropoff"]
+            else:
+                logger.error(f"ForkliftServer: Unknown autonav target '{target_location_name}'. Valid: 'pickup', 'dropoff'.")
+                self.autonav_active = False
+                return
+
+            if target_pose_for_nav:
+                self.navigation_controller.set_target(target_pose_for_nav)
+                logger.info(f"ForkliftServer: Autonomous navigation started towards {self.autonav_current_stage} ({target_location_name}). Target pose: {target_pose_for_nav}")
+                self.autonav_stage_entry_time = time.time()
+            else:
+                logger.error(f"ForkliftServer: Target pose for '{target_location_name}' is None even after check. Autonav not started.")
+                self.autonav_active = False
+                self.autonav_current_stage = AUTONAV_STAGE_IDLE
+
+    def _handle_set_nav_pid_command(self, data: Dict[str, Any]):
+        """Handles 'set_nav_pid' command to update PID gains for navigation controllers.
+        Payload expected: {"pid_name": "point_turning"/"xy_distance"/"final_orientation", 
+                         "kp": <float>, "ki": <float>, "kd": <float>}
+        """
+        pid_name = data.get("pid_name")
+        kp = data.get("kp")
+        ki = data.get("ki")
+        kd = data.get("kd")
+
+        if None in [pid_name, kp, ki, kd]:
+            logger.warning(f"ForkliftServer: SET_NAV_PID command missing parameters. Received: {data}")
+            return
+        
+        try:
+            kp_f, ki_f, kd_f = float(kp), float(ki), float(kd)
+            self.navigation_controller.update_pid_gains(pid_name, kp_f, ki_f, kd_f)
+        except ValueError:
+            logger.error(f"ForkliftServer: Invalid PID gain values in SET_NAV_PID. Must be numbers. Received: {data}")
+        except Exception as e:
+            logger.error(f"ForkliftServer: Error updating PID gains for '{pid_name}': {e}", exc_info=True)
+
+    def _handle_set_overhead_target_command(self, data: Dict[str, Any]):
+        """Handles 'set_overhead_target' command to define pickup or dropoff waypoints.
+        These are based on the overhead camera's view and an ArUco marker placed at the target.
+        Payload expected: {"target_type": "pickup"/"dropoff", "x": <px>, "y": <px>, "theta_deg": <degrees>}
+        If x,y,theta are not provided, it means to capture current primary ArUco marker from onboard camera
+        as the target. This part is more complex and might need UI interaction or a specific "capture target" mode.
+        For now, assumes x,y,theta are provided explicitly for overhead targets.
+        """
+        target_type = data.get("target_type", "").lower()
+        x_px = data.get("x")
+        y_px = data.get("y")
+        theta_deg = data.get("theta_deg")
+
+        if target_type not in ["pickup", "dropoff"]:
+            logger.warning(f"ForkliftServer: Invalid target_type '{target_type}' in SET_OVERHEAD_TARGET. Must be 'pickup' or 'dropoff'.")
+            return
+
+        if None in [x_px, y_px, theta_deg]:
+            logger.warning(f"ForkliftServer: SET_OVERHEAD_TARGET for '{target_type}' missing x, y, or theta_deg. Received: {data}. Target not set.")
+            if data.get("clear") == True:
+                 self.overhead_target_poses_pixels[target_type] = None
+                 self._save_overhead_target_poses()
+                 logger.info(f"ForkliftServer: Cleared overhead target for '{target_type}'.")
+            return
+
+        try:
+            x_val, y_val, theta_val_deg = float(x_px), float(y_px), float(theta_deg)
+            theta_val_rad = math.radians(theta_val_deg)
+            self.overhead_target_poses_pixels[target_type] = (x_val, y_val, theta_val_rad)
+            self._save_overhead_target_poses()
+            logger.info(f"ForkliftServer: Overhead target for '{target_type}' set to (X:{x_val:.0f}px, Y:{y_val:.0f}px, Theta:{theta_val_deg:.1f}°). Saved.")
+        except ValueError:
+            logger.error(f"ForkliftServer: Invalid numeric values for x, y, or theta_deg in SET_OVERHEAD_TARGET. Received: {data}")
+
+    def _handle_set_speed_limits_command(self, data: Dict[str, Any]):
+        """Handles 'set_speed_limits' to update navigation speed parameters.
+        Payload example: {"NAV_MAX_FORWARD_SPEED": 80, "NAV_MAX_TURNING_SPEED": 70, "NAV_MIN_EFFECTIVE_SPEED": 60}
+        Updates corresponding values in the `config` module if they exist as attributes.
+        Also updates the NavigationController's internal speed limits.
+        """
+        logger.info(f"ForkliftServer: Received SET_SPEED_LIMITS command: {data}")
+        updated_any = False
+        for key, value in data.items():
+            if hasattr(config, key):
+                try:
+                    current_val = getattr(config, key)
+                    new_val = type(current_val)(value)
+                    setattr(config, key, new_val)
+                    logger.info(f"ForkliftServer: Config value '{key}' updated from {current_val} to {new_val}.")
+                    updated_any = True
+                except Exception as e:
+                    logger.error(f"ForkliftServer: Failed to update config value '{key}' to '{value}': {e}")
+            else:
+                logger.warning(f"ForkliftServer: Config key '{key}' not found in config module.")
+
+        if updated_any:
+            self.navigation_controller.max_forward_speed = config.NAV_MAX_FORWARD_SPEED
+            self.navigation_controller.max_turning_speed = config.NAV_MAX_TURNING_SPEED
+            self.navigation_controller.min_effective_speed = config.NAV_MIN_EFFECTIVE_SPEED
+            logger.info("ForkliftServer: NavigationController speed limits updated from config.")
+            for pid_controller in [self.navigation_controller.point_turning_pid, 
+                                   self.navigation_controller.xy_distance_pid, 
+                                   self.navigation_controller.final_orientation_pid]:
+                if hasattr(pid_controller, 'max_integral'):
+                    pid_controller.max_integral = float(config.NAV_MAX_FORWARD_SPEED)
+                    pid_controller.min_integral = -float(config.NAV_MAX_FORWARD_SPEED)
+            logger.info("ForkliftServer: PID controller integral limits updated based on NAV_MAX_FORWARD_SPEED.")
+
+    def _signal_shutdown_handler(self, signum, frame):
+        """Handles SIGINT (Ctrl+C) and SIGTERM signals for graceful shutdown."""
+        signal_name = signal.Signals(signum).name
+        logger.info(f"ForkliftServer: Shutdown signal {signal_name} (ID: {signum}) received. Initiating cleanup...")
+        if not self._cleanup_initiated:
+             self.cleanup()
+        else:
+            logger.info("ForkliftServer: Cleanup already in progress or completed.")
+
+    def start(self):
+        """Starts all server components and the main processing loop."""
+        logger.info("ForkliftServer: Starting all services...")
+        try:
+            self.onboard_video_thread.start()
+            self.overhead_video_thread.start()
+            self.command_receiver_thread.start()
+            
+            self.warehouse_camera_client.connect()
+
+            logger.info("ForkliftServer: All network services started/starting.")
+            
+            while self.is_running:
+                loop_start_time = time.perf_counter()
+
+                warehouse_time_sec = self.warehouse_camera_client.get_warehouse_time()
+                raw_overhead_frame = self.warehouse_camera_client.get_video_frame()
+
+                processed_overhead_frame = None
+                current_robot_pose_for_nav = None
+
+                if raw_overhead_frame is not None:
+                    if self.overhead_cam_matrix is not None and \
+                       self.overhead_cam_dist_coeffs is not None and \
+                       self.new_overhead_cam_matrix is not None:
+                        try:
+                            undistorted_frame = cv2.undistort(raw_overhead_frame, 
+                                                              self.overhead_cam_matrix, 
+                                                              self.overhead_cam_dist_coeffs, 
+                                                              None, 
+                                                              self.new_overhead_cam_matrix)
+                            if self.overhead_calibration_roi:
+                                x, y, w, h = self.overhead_calibration_roi
+                                undistorted_frame = undistorted_frame[y:y+h, x:x+w]
+                            processed_overhead_frame = undistorted_frame
+                        except Exception as e:
+                            logger.error(f"ForkliftServer: Error undistorting overhead frame: {e}")
+                            processed_overhead_frame = raw_overhead_frame
+                    else:
+                        processed_overhead_frame = raw_overhead_frame
+
+                    localization_result = self.overhead_localizer.get_robot_pose_from_frame(processed_overhead_frame)
+                    
+                    if localization_result:
+                        self.robot_overhead_pose_pixels = localization_result.pose_xy_theta_rad
+                        current_robot_pose_for_nav = self.robot_overhead_pose_pixels
+                        logger.debug(f"ForkliftServer: Robot localized at X:{localization_result.pose_xy_theta_rad[0]:.0f}, Y:{localization_result.pose_xy_theta_rad[1]:.0f}, Theta:{math.degrees(localization_result.pose_xy_theta_rad[2]):.1f}°")
+                        
+                        processed_overhead_frame = self.overhead_localizer.draw_robot_pose_on_frame(
+                            processed_overhead_frame, localization_result
+                        )
+                    else:
+                        self.robot_overhead_pose_pixels = None
+                        logger.debug("ForkliftServer: Robot not localized in current overhead frame.")
+                    
+                    if self.overhead_target_poses_pixels["pickup"]:
+                        self.overhead_localizer.draw_target_on_frame(processed_overhead_frame, self.overhead_target_poses_pixels["pickup"], "PICKUP", (0, 255, 0))
+                    if self.overhead_target_poses_pixels["dropoff"]:
+                        self.overhead_localizer.draw_target_on_frame(processed_overhead_frame, self.overhead_target_poses_pixels["dropoff"], "DROPOFF", (0, 0, 255))
+
+                    self.overhead_video_streamer.set_frame(processed_overhead_frame)
+                
+                if self.autonav_active and current_robot_pose_for_nav:
+                    is_target_reached_nav = False
+                    
+                    if self.autonav_current_stage == AUTONAV_STAGE_NAV_TO_PICKUP:
+                        logger.info(f"Autonav: NAV_TO_PICKUP. Current pose: X:{current_robot_pose_for_nav[0]:.0f}, Y:{current_robot_pose_for_nav[1]:.0f}, Theta:{math.degrees(current_robot_pose_for_nav[2]):.1f}°")
+                        if self.navigation_controller.current_target_pixel_pose != self.overhead_target_poses_pixels["pickup"]:
+                            pickup_target = self.overhead_target_poses_pixels["pickup"]
+                            if pickup_target:
+                                self.navigation_controller.set_target(pickup_target)
+                                logger.info(f"Autonav: Re-set NAV_TO_PICKUP target: {pickup_target}")
+                            else:
+                                logger.error("Autonav: Pickup target is None during NAV_TO_PICKUP stage. Stopping autonav.")
+                                self.autonav_active = False; self.autonav_current_stage = AUTONAV_STAGE_IDLE
+
+                        if self.autonav_active:
+                            is_target_reached_nav = self.navigation_controller.navigate(current_robot_pose_for_nav)
+                            if is_target_reached_nav:
+                                logger.info("Autonav: Reached PICKUP location.")
+                                self.motor_controller.stop()
+                                self.autonav_current_stage = AUTONAV_STAGE_LOWER_FORKS_FOR_PICKUP
+                                self.autonav_stage_entry_time = time.time()
+                    
+                    elif self.autonav_current_stage == AUTONAV_STAGE_LOWER_FORKS_FOR_PICKUP:
+                        if self.primary_fork_servo:
+                            logger.info("Autonav: LOWER_FORKS_FOR_PICKUP.")
+                            self.primary_fork_servo.set_position(config.AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE)
+                            self.autonav_current_stage = AUTONAV_STAGE_PICKUP_DELAY
+                            self.autonav_stage_entry_time = time.time()
+                        else:
+                            logger.error("Autonav: No primary fork servo for LOWER_FORKS. Stopping autonav.")
+                            self.autonav_active = False; self.autonav_current_stage = AUTONAV_STAGE_IDLE
+                    
+                    elif self.autonav_current_stage == AUTONAV_STAGE_PICKUP_DELAY:
+                        delay_duration = config.AUTONAV_PICKUP_DELAY_SECONDS
+                        if time.time() - self.autonav_stage_entry_time >= delay_duration:
+                            logger.info(f"Autonav: PICKUP_DELAY of {delay_duration}s complete.")
+                            self.autonav_current_stage = AUTONAV_STAGE_LIFT_FORKS_WITH_ITEM
+                            self.autonav_stage_entry_time = time.time()
+                            
+                    elif self.autonav_current_stage == AUTONAV_STAGE_LIFT_FORKS_WITH_ITEM:
+                        if self.primary_fork_servo:
+                            logger.info("Autonav: LIFT_FORKS_WITH_ITEM.")
+                            self.primary_fork_servo.set_position(config.AUTONAV_FORK_CARRY_ANGLE)
+                            dropoff_target = self.overhead_target_poses_pixels["dropoff"]
+                            if dropoff_target:
+                                self.navigation_controller.set_target(dropoff_target)
+                                self.autonav_current_stage = AUTONAV_STAGE_NAV_TO_DROPOFF
+                                self.autonav_stage_entry_time = time.time()
+                                logger.info(f"Autonav: Set NAV_TO_DROPOFF target: {dropoff_target}")
+                            else:
+                                logger.error("Autonav: Dropoff target not set. Cannot proceed to NAV_TO_DROPOFF. Stopping.")
+                                self.autonav_active = False; self.autonav_current_stage = AUTONAV_STAGE_COMPLETE
+                        else:
+                             logger.error("Autonav: No primary fork servo for LIFT_FORKS. Stopping autonav.")
+                             self.autonav_active = False; self.autonav_current_stage = AUTONAV_STAGE_IDLE
+
+                    elif self.autonav_current_stage == AUTONAV_STAGE_NAV_TO_DROPOFF:
+                        logger.info(f"Autonav: NAV_TO_DROPOFF. Current pose: X:{current_robot_pose_for_nav[0]:.0f}, Y:{current_robot_pose_for_nav[1]:.0f}, Theta:{math.degrees(current_robot_pose_for_nav[2]):.1f}°")
+                        if self.navigation_controller.current_target_pixel_pose != self.overhead_target_poses_pixels["dropoff"]:
+                             dropoff_target = self.overhead_target_poses_pixels["dropoff"]
+                             if dropoff_target:
+                                 self.navigation_controller.set_target(dropoff_target)
+                                 logger.info(f"Autonav: Re-set NAV_TO_DROPOFF target: {dropoff_target}")
+                             else:
+                                 logger.error("Autonav: Dropoff target is None during NAV_TO_DROPOFF stage. Stopping autonav.")
+                                 self.autonav_active = False; self.autonav_current_stage = AUTONAV_STAGE_IDLE
+                        
+                        if self.autonav_active:
+                            is_target_reached_nav = self.navigation_controller.navigate(current_robot_pose_for_nav)
+                            if is_target_reached_nav:
+                                logger.info("Autonav: Reached DROPOFF location.")
+                                self.motor_controller.stop()
+                                self.autonav_current_stage = AUTONAV_STAGE_LOWER_FORKS_FOR_DROPOFF
+                                self.autonav_stage_entry_time = time.time()
+
+                    elif self.autonav_current_stage == AUTONAV_STAGE_LOWER_FORKS_FOR_DROPOFF:
+                        if self.primary_fork_servo:
+                            logger.info("Autonav: LOWER_FORKS_FOR_DROPOFF.")
+                            self.primary_fork_servo.set_position(config.AUTONAV_FORK_LOWER_TO_PICKUP_ANGLE) 
+                            self.autonav_current_stage = AUTONAV_STAGE_DROPOFF_DELAY
+                            self.autonav_stage_entry_time = time.time()
+                        else:
+                            logger.error("Autonav: No primary fork servo for LOWER_FORKS_DROPOFF. Stopping autonav.")
+                            self.autonav_active = False; self.autonav_current_stage = AUTONAV_STAGE_IDLE
+                    
+                    elif self.autonav_current_stage == AUTONAV_STAGE_DROPOFF_DELAY:
+                        delay_duration = config.AUTONAV_DROPOFF_DELAY_SECONDS
+                        if time.time() - self.autonav_stage_entry_time >= delay_duration:
+                            logger.info(f"Autonav: DROPOFF_DELAY of {delay_duration}s complete.")
+                            self.autonav_current_stage = AUTONAV_STAGE_LIFT_FORKS_AFTER_DROPOFF
+                            self.autonav_stage_entry_time = time.time()
+
+                    elif self.autonav_current_stage == AUTONAV_STAGE_LIFT_FORKS_AFTER_DROPOFF:
+                        if self.primary_fork_servo:
+                            logger.info("Autonav: LIFT_FORKS_AFTER_DROPOFF (to clear item).")
+                            self.primary_fork_servo.set_position(config.AUTONAV_FORK_CARRY_ANGLE)
+                            self.autonav_current_stage = AUTONAV_STAGE_COMPLETE
+                            self.autonav_stage_entry_time = time.time()
+                        else:
+                            logger.error("Autonav: No primary fork servo for LIFT_FORKS_AFTER_DROPOFF. Autonav ending.")
+                            self.autonav_current_stage = AUTONAV_STAGE_COMPLETE
+
+                    elif self.autonav_current_stage == AUTONAV_STAGE_COMPLETE:
+                        logger.info("Autonav: Cycle COMPLETE. Returning to IDLE.")
+                        self.autonav_active = False
+                        self.autonav_current_stage = AUTONAV_STAGE_IDLE
+                        self.motor_controller.stop()
+                        self.navigation_controller.clear_target()
+                        if self.primary_fork_servo:
+                             self.primary_fork_servo.set_position(config.FORK_A_INITIAL_ANGLE)
+
+                loop_duration = time.perf_counter() - loop_start_time
+                sleep_time = max(0, (1.0 / config.MAIN_LOOP_MAX_FPS) - loop_duration)
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                else:
+                    logger.debug(f"ForkliftServer: Main loop iteration took {loop_duration*1000:.2f}ms (longer than target max FPS period). Consider optimizing.")
+
+        except KeyboardInterrupt:
+            logger.info("ForkliftServer: KeyboardInterrupt caught in main start() loop. Initiating cleanup...")
+        except Exception as e:
+            logger.error(f"ForkliftServer: Unhandled exception in main start() loop: {e}", exc_info=True)
+        finally:
+            logger.info("ForkliftServer: Main start() loop ending. Ensuring cleanup is called.")
+            if not self._cleanup_initiated:
+                self.cleanup()
+            else:
+                self.cleanup_complete_event.wait(timeout=10)
+            logger.info("ForkliftServer: Start method fully exited.")
 
     def cleanup(self):
-        """Clean up resources"""
-        with self.cleanup_lock:
-            if self.is_cleanup_complete(): # Use a method to check the event
-                logger.info("Cleanup already completed or in progress by another call.")
+        """Stops all services, cleans up resources, and waits for threads to join.
+        This method is designed to be called once, either by a signal handler or at
+        the end of the main loop.
+        """
+        with self._cleanup_in_progress_lock:
+            if self._cleanup_initiated:
+                logger.info("ForkliftServer: Cleanup already initiated or completed. Skipping.")
                 return
-            
-            if not self.running: # Check if main loop was ever running
-                logger.info("Main loop was not active, minimal cleanup needed.")
-                self.cleanup_complete.set()
-                return
+            self._cleanup_initiated = True
+        
+        logger.info("ForkliftServer: Starting cleanup sequence...")
+        self.is_running = False
 
-            logger.info("Initiating server shutdown sequence...")
-            self.running = False # Signal main loop to stop, if it hasn't already from _handle_shutdown
+        logger.info("ForkliftServer: Stopping CommandServer...")
+        if self.command_receiver_server: self.command_receiver_server.stop()
+        
+        logger.info("ForkliftServer: Stopping Onboard VideoStreamer...")
+        if self.onboard_video_streamer: self.onboard_video_streamer.stop()
+        
+        logger.info("ForkliftServer: Stopping Overhead VideoStreamer...")
+        if self.overhead_video_streamer: self.overhead_video_streamer.stop()
 
-            # Stop network components first by signaling their internal stop events
-            if hasattr(self, 'command_server') and self.command_server:
-                logger.info("Signaling Command Server to stop...")
-                self.command_server.stop()
-            if hasattr(self, 'video_streamer') and self.video_streamer:
-                logger.info("Signaling Onboard Video Streamer to stop...")
-                self.video_streamer.stop() # Corrected method name
-            if hasattr(self, 'overhead_video_streamer') and self.overhead_video_streamer:
-                logger.info("Signaling Overhead Video Streamer to stop...")
-                self.overhead_video_streamer.stop()
-            
-            # Disconnect blocking clients like the overhead camera client
-            if hasattr(self, 'overhead_camera_client') and self.overhead_camera_client:
-                logger.info("Disconnecting Overhead Camera Client...")
-                self.overhead_camera_client.disconnect() # This is blocking
+        logger.info("ForkliftServer: Disconnecting WarehouseCameraClient...")
+        if self.warehouse_camera_client: self.warehouse_camera_client.disconnect()
 
-            # Join threads (ensure they have a chance to exit cleanly)
-            timeout_seconds = 3.0 # Slightly increased timeout
-            threads_to_join = []
-            if hasattr(self, 'command_thread') and self.command_thread.is_alive():
-                threads_to_join.append(("Command Server", self.command_thread))
-            if hasattr(self, 'video_thread') and self.video_thread.is_alive():
-                threads_to_join.append(("Onboard Video Streamer", self.video_thread))
-            if hasattr(self, 'overhead_video_thread') and self.overhead_video_thread.is_alive():
-                threads_to_join.append(("Overhead Video Streamer", self.overhead_video_thread))
-
-            for name, thread_obj in threads_to_join:
-                logger.info(f"Waiting for {name} thread to join...")
-                thread_obj.join(timeout=timeout_seconds)
-                if thread_obj.is_alive():
-                    logger.warning(f"{name} thread did not join within timeout.")
-                else:
-                    logger.info(f"{name} thread joined successfully.")
-
-            # After threads are joined, call their explicit cleanup methods
-            if hasattr(self, 'command_server') and self.command_server:
-                logger.info("Cleaning up Command Server resources...")
-                self.command_server.cleanup()
-            if hasattr(self, 'video_streamer') and self.video_streamer:
-                logger.info("Cleaning up Onboard Video Streamer resources...")
-                self.video_streamer.cleanup()
-            if hasattr(self, 'overhead_video_streamer') and self.overhead_video_streamer:
-                logger.info("Cleaning up Overhead Video Streamer resources...")
-                self.overhead_video_streamer.cleanup()
-            # overhead_camera_client has disconnect(), no separate cleanup usually
-
-            if hasattr(self, 'navigation_controller') and self.navigation_controller:
-                logger.info("Clearing target and stopping motors via Navigation Controller...")
-                self.navigation_controller.clear_target() # This should also stop motors
-
-            # Cleanup hardware controllers (motors, servos)
-            if hasattr(self, 'motor_controller') and self.motor_controller:
-                logger.info("Cleaning up Motor Controller...")
-                self.motor_controller.cleanup()
-            
-            if hasattr(self, 'servos'):
-                logger.info("Cleaning up Servo Controllers...")
-                for pin, servo_controller_instance in self.servos.items():
-                    if servo_controller_instance:
-                        try:
-                            logger.info(f"Cleaning up servo on pin {pin}...")
-                            servo_controller_instance.cleanup()
-                        except Exception as e:
-                            logger.error(f"Error cleaning up servo on pin {pin}: {e}", exc_info=True)
-            
-            logger.info("Performing final GPIO cleanup...")
+        logger.info("ForkliftServer: Stopping MotorController...")
+        if self.motor_controller: self.motor_controller.stop()
+        
+        logger.info("ForkliftServer: Cleaning up ServoControllers...")
+        for pin, servo_ctrl in self.servo_controllers.items():
             try:
-                GPIO.cleanup() # General GPIO cleanup as a last step
-            except Exception as e: # Catch if RPi.GPIO is not used or already cleaned.
-                logger.warning(f"Warning/Error during general GPIO.cleanup(): {e}")
+                logger.debug(f"Cleaning up servo on pin {pin}...")
+                servo_ctrl.cleanup()
+            except Exception as e:
+                logger.error(f"Error cleaning up servo on pin {pin}: {e}")
+        self.servo_controllers.clear()
 
-            logger.info("ForkliftServer cleanup sequence complete.")
-            self.cleanup_complete.set() # Signal that cleanup is done
-            
-    def is_cleanup_complete(self): # Helper method to check event
-        return self.cleanup_complete.is_set()
+        thread_timeout = 5.0
+        threads_to_join = {
+            "CommandServerThread": self.command_receiver_thread,
+            "OnboardVideoStreamThread": self.onboard_video_thread,
+            "OverheadVideoStreamThread": self.overhead_video_thread,
+        }
+        for name, thread_obj in threads_to_join.items():
+            if thread_obj and thread_obj.is_alive():
+                logger.info(f"ForkliftServer: Waiting for {name} to join...")
+                thread_obj.join(timeout=thread_timeout)
+                if thread_obj.is_alive():
+                    logger.warning(f"ForkliftServer: {name} did not join within {thread_timeout}s timeout.")
+                else:
+                    logger.info(f"ForkliftServer: {name} joined.")
+        
+        logger.info("ForkliftServer: Performing GPIO.cleanup()...")
+        try:
+            GPIO.cleanup()
+            logger.info("ForkliftServer: GPIO cleanup successful.")
+        except Exception as e:
+            logger.error(f"ForkliftServer: Error during GPIO.cleanup(): {e}")
+
+        self.cleanup_complete_event.set()
+        logger.info("ForkliftServer: Cleanup sequence complete.")
+
+    def is_cleanup_complete(self) -> bool:
+        """Checks if the cleanup process has finished."""
+        return self.cleanup_complete_event.is_set()
 
     def _load_overhead_target_poses(self):
+        """Loads saved pickup and dropoff target poses from a JSON file."""
+        script_dir = os.path.dirname(__file__)
+        file_path = os.path.join(script_dir, OVERHEAD_TARGETS_FILE)
         try:
-            with open(OVERHEAD_TARGETS_FILE, 'r') as f:
-                loaded_poses = json.load(f)
-                # Basic validation: check if keys exist, can be more thorough
-                if "pickup" in loaded_poses and "dropoff" in loaded_poses:
-                    self.overhead_target_poses["pickup"] = tuple(loaded_poses["pickup"]) if loaded_poses["pickup"] else None
-                    self.overhead_target_poses["dropoff"] = tuple(loaded_poses["dropoff"]) if loaded_poses["dropoff"] else None
-                    logger.info(f"Overhead target poses loaded from {OVERHEAD_TARGETS_FILE}.")
-                    if self.overhead_target_poses["pickup"]:
-                        px, py, pth = self.overhead_target_poses["pickup"]
-                        logger.info(f"  Loaded Pickup: X={px:.0f}, Y={py:.0f}, Theta={math.degrees(pth):.1f}°")
-                    if self.overhead_target_poses["dropoff"]:
-                        dx, dy, dth = self.overhead_target_poses["dropoff"]
-                        logger.info(f"  Loaded Dropoff: X={dx:.0f}, Y={dy:.0f}, Theta={math.degrees(dth):.1f}°")
-                else:
-                    logger.warning(f"Invalid format in {OVERHEAD_TARGETS_FILE}. Using default empty poses.")
-        except FileNotFoundError:
-            logger.info(f"{OVERHEAD_TARGETS_FILE} not found. Will be created when targets are set. Using default empty poses.")
-        except json.JSONDecodeError:
-            logger.error(f"Error decoding JSON from {OVERHEAD_TARGETS_FILE}. Using default empty poses.")
+            if os.path.exists(file_path):
+                with open(file_path, 'r') as f:
+                    loaded_poses = json.load(f)
+                    pickup_pose = loaded_poses.get("pickup")
+                    if isinstance(pickup_pose, list) and len(pickup_pose) == 3:
+                        self.overhead_target_poses_pixels["pickup"] = tuple(pickup_pose)
+                    
+                    dropoff_pose = loaded_poses.get("dropoff")
+                    if isinstance(dropoff_pose, list) and len(dropoff_pose) == 3:
+                         self.overhead_target_poses_pixels["dropoff"] = tuple(dropoff_pose)
+                    logger.info(f"ForkliftServer: Loaded overhead target poses from {file_path}. Pickup: {self.overhead_target_poses_pixels['pickup']}, Dropoff: {self.overhead_target_poses_pixels['dropoff']}")
+            else:
+                logger.info(f"ForkliftServer: Overhead targets file ({file_path}) not found. Targets will be None.")
         except Exception as e:
-            logger.error(f"Unexpected error loading overhead target poses: {e}. Using default empty poses.")
+            logger.error(f"ForkliftServer: Error loading overhead target poses from {file_path}: {e}", exc_info=True)
 
     def _save_overhead_target_poses(self):
+        """Saves the current pickup and dropoff target poses to a JSON file."""
+        script_dir = os.path.dirname(__file__)
+        file_path = os.path.join(script_dir, OVERHEAD_TARGETS_FILE)
         try:
-            with open(OVERHEAD_TARGETS_FILE, 'w') as f:
-                json.dump(self.overhead_target_poses, f, indent=4)
-            logger.info(f"Overhead target poses saved to {OVERHEAD_TARGETS_FILE}.")
+            with open(file_path, 'w') as f:
+                poses_to_save = {
+                    "pickup": list(self.overhead_target_poses_pixels["pickup"]) if self.overhead_target_poses_pixels["pickup"] else None,
+                    "dropoff": list(self.overhead_target_poses_pixels["dropoff"]) if self.overhead_target_poses_pixels["dropoff"] else None,
+                }
+                json.dump(poses_to_save, f, indent=4)
+                logger.info(f"ForkliftServer: Saved overhead target poses to {file_path}.")
         except Exception as e:
-            logger.error(f"Error saving overhead target poses to {OVERHEAD_TARGETS_FILE}: {e}")
+            logger.error(f"ForkliftServer: Error saving overhead target poses to {file_path}: {e}", exc_info=True)
 
 if __name__ == '__main__':
-    server = ForkliftServer()
-    server.start() 
+    logging.getLogger().handlers.clear()
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(threadName)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    main_logger = logging.getLogger("ForkliftServerApp")
+    main_logger.info("Starting Forklift Server application directly...")
+
+    server_instance = None
+    try:
+        server_instance = ForkliftServer()
+        server_instance.start()
+        
+    except Exception as e:
+        main_logger.critical(f"ForkliftServerApp: Critical unhandled exception at top level: {e}", exc_info=True)
+    finally:
+        main_logger.info("ForkliftServerApp: Main execution block finished or exited via exception.")
+        if server_instance and not server_instance.is_cleanup_complete():
+            main_logger.info("ForkliftServerApp: Cleanup might not have completed. Initiating/Waiting for cleanup again just in case.")
+            if not server_instance._cleanup_initiated:
+                 server_instance.cleanup()
+            server_instance.cleanup_complete_event.wait(timeout=10)
+            if not server_instance.is_cleanup_complete():
+                 main_logger.warning("ForkliftServerApp: Cleanup still not marked complete after final wait.")
+        
+        main_logger.info("ForkliftServerApp: Exiting.")
+ 

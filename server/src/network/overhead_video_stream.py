@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import threading
-from typing import Optional, Set
+from typing import Optional, Set, Any
 import numpy as np
 import cv2
 from websockets.server import serve as ws_serve
@@ -10,148 +10,206 @@ from websockets.exceptions import ConnectionClosed
 logger = logging.getLogger(__name__)
 
 class OverheadStreamer:
+    """Streams video frames received from an external source (e.g., processed
+    overhead camera feed) to connected WebSocket clients.
+
+    This class acts as a WebSocket server. It receives NumPy array frames via
+    its `set_frame` method. Each connected client has its own queue, and frames
+    are pushed to these queues. A dedicated asyncio task for each client then
+    retrieves frames from its queue, encodes them as JPEG, and sends them over
+    the WebSocket connection.
+    """
     def __init__(self, host: str, port: int):
+        """Initializes the OverheadStreamer.
+
+        Args:
+            host: The network host to bind the WebSocket server to.
+            port: The port for the WebSocket video streaming server.
+        """
         self.host = host
         self.port = port
-        self.server = None
-        self.clients: Set[asyncio.Queue] = set()
-        self.running = False
+        self.server: Optional[Any] = None
+        self.clients: Set[asyncio.Queue[Optional[np.ndarray]]] = set()
+        self._running_WebSocket_server = False
         self._stop_event: Optional[asyncio.Event] = None
-        self.loop: Optional[asyncio.AbstractEventLoop] = None
+        self.async_loop: Optional[asyncio.AbstractEventLoop] = None
+        self.server_thread: Optional[threading.Thread] = None
         self.external_frame: Optional[np.ndarray] = None
         self.external_frame_lock = threading.Lock()
-        self.jpeg_quality = 50 # Reduced JPEG quality from 75 to 50
+        self.jpeg_quality = 50
 
     def set_frame(self, frame: np.ndarray):
-        """Sets the current frame to be streamed."""
+        """Accepts a new video frame and distributes it to all client queues.
+
+        This method is thread-safe. It should be called by the source providing
+        the overhead video frames (e.g., after processing by OverheadLocalizer).
+
+        Args:
+            frame: The video frame (as a NumPy ndarray) to be streamed.
+        """
         with self.external_frame_lock:
             self.external_frame = frame.copy()
-        # Notify worker to send the frame
-        for q in self.clients:
+        for client_q in list(self.clients):
             try:
-                # Non-blocking put, or handle queue full if it can happen
-                # For simplicity, assuming queue won't be full if clients are responsive
-                q.put_nowait(self.external_frame) 
+                client_q.put_nowait(frame.copy())
             except asyncio.QueueFull:
-                pass # Silently drop the frame if the client's queue is full
+                logger.warning(f"OverheadStreamer: Client queue full for a client. Frame dropped for this client.")
             except Exception as e:
-                logger.error(f"OverheadStreamer: Error putting frame to queue for client {q}: {e}")
+                logger.error(f"OverheadStreamer: Error putting frame to a client queue: {e}")
 
+    async def _handle_client_websocket(self, websocket: Any, path: str):
+        """Handles an individual WebSocket client connection.
 
-    async def _handle_client(self, websocket, path):
-        logger.info(f"OverheadStreamer: New client connected from {websocket.remote_address} to {self.host}:{self.port}")
-        client_queue = asyncio.Queue(maxsize=15) # Increased buffer size from 5 to 15
+        A new instance of this coroutine is run for each client that connects.
+        It creates a dedicated asyncio.Queue for the client, adds it to `self.clients`,
+        and then enters a loop to get frames from this queue, encode them, and send them.
+
+        Args:
+            websocket: The WebSocket connection object for this client.
+            path: The path of the WebSocket connection (unused).
+        """
+        remote_addr = websocket.remote_address
+        logger.info(f"OverheadStreamer: New client connected from {remote_addr} on path '{path}'.")
+        client_queue: asyncio.Queue[Optional[np.ndarray]] = asyncio.Queue(maxsize=10)
         self.clients.add(client_queue)
         try:
-            while self.running:
+            while self._running_WebSocket_server:
+                frame_to_send = None
                 try:
                     frame_to_send = await asyncio.wait_for(client_queue.get(), timeout=1.0)
-                    if frame_to_send is None: # Could be a signal to stop, though not used here
-                        continue
-
-                    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality]
-                    result, encoded_jpeg = cv2.imencode('.jpg', frame_to_send, encode_param)
-                    
-                    if not result:
-                        logger.error("OverheadStreamer: Failed to encode frame to JPEG")
-                        continue
-                    
-                    await websocket.send(encoded_jpeg.tobytes())
-                    client_queue.task_done()
-                    await asyncio.sleep(0.08) # Add a small delay to regulate sending rate to client
-
                 except asyncio.TimeoutError:
-                    # Check if websocket is still alive or if we should break
                     if not websocket.open:
-                        logger.info("OverheadStreamer: Client websocket closed during timeout check.")
+                        logger.info(f"OverheadStreamer: Client {remote_addr} websocket closed during queue timeout.")
                         break
-                    continue # Normal if no new frame within timeout
-                except ConnectionClosed:
-                    logger.info(f"OverheadStreamer: Client {websocket.remote_address} connection closed.")
+                    continue
+                
+                if frame_to_send is None:
+                    logger.info(f"OverheadStreamer: Received None from queue for client {remote_addr}. Ending handler.")
                     break
-                except Exception as e:
-                    logger.error(f"OverheadStreamer: Error in client handler for {websocket.remote_address}: {e}", exc_info=True)
-                    break
+
+                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality]
+                result, encoded_jpeg = cv2.imencode('.jpg', frame_to_send, encode_param)
+                
+                if not result:
+                    logger.error("OverheadStreamer: Failed to encode frame to JPEG. Skipping send.")
+                    client_queue.task_done()
+                    continue
+                
+                await websocket.send(encoded_jpeg.tobytes())
+                client_queue.task_done()
+
+        except ConnectionClosed:
+            logger.info(f"OverheadStreamer: Client {remote_addr} connection closed gracefully.")
+        except Exception as e:
+            logger.error(f"OverheadStreamer: Error in client handler for {remote_addr}: {e}", exc_info=True)
         finally:
-            logger.info(f"OverheadStreamer: Client {websocket.remote_address} disconnected.")
-            self.clients.remove(client_queue)
+            logger.info(f"OverheadStreamer: Client {remote_addr} disconnecting. Removing its queue.")
+            self.clients.discard(client_queue)
+            while not client_queue.empty():
+                try:
+                    client_queue.get_nowait()
+                    client_queue.task_done()
+                except asyncio.QueueEmpty:
+                    break
+                except Exception:
+                    pass
 
-
-    async def start_server_async(self):
-        """Start the WebSocket server (async part)"""
+    async def _run_server_main_task(self):
+        """The main asynchronous task that runs the WebSocket server using `ws_serve`."""
         self._stop_event = asyncio.Event()
+        
         async with ws_serve(
-            self._handle_client,
+            self._handle_client_websocket,
             self.host,
             self.port,
             ping_interval=20,
             ping_timeout=20,
             reuse_address=True
-        ) as server:
-            self.server = server
-            self.running = True
-            logger.info(f"OverheadStreamer WebSocket server started on {self.host}:{self.port}")
+        ) as server_instance:
+            self.server = server_instance
+            self._running_WebSocket_server = True
+            logger.info(f"OverheadStreamer: WebSocket server started and listening on {self.host}:{self.port}")
+            
             await self._stop_event.wait()
-            logger.info("OverheadStreamer stop event received, proceeding to resource shutdown.")
-            await self._shutdown_server_resources()
+            
+            logger.info("OverheadStreamer: Stop event received. Shutting down WebSocket server.")
+
+        self._running_WebSocket_server = False
+        logger.info("OverheadStreamer: WebSocket server has shut down.")
             
     def start(self):
-        """Start the streamer (called by ForkliftServer thread)"""
-        try:
-            self.loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.loop)
-            self.loop.run_until_complete(self.start_server_async())
-        except Exception as e:
-            logger.error(f"OverheadStreamer: Error starting: {e}", exc_info=True)
-            # self.cleanup() # Ensure cleanup if start fails
-        finally:
-            if self.loop and not self.loop.is_closed():
-                logger.info("OverheadStreamer: Closing event loop in start() finally.")
-                self.loop.close()
-            logger.info("OverheadStreamer: start() method finished.")
-
-    async def _shutdown_server_resources(self):
-        logger.info(f"OverheadStreamer ({self.host}:{self.port}) shutting down resources...")
-        # Clients are identified by their queues; just clearing the set
-        self.clients.clear()
-
-        if self.server:
-            self.server.close()
-            try:
-                await asyncio.wait_for(self.server.wait_closed(), timeout=5.0)
-                logger.info(f"OverheadStreamer ({self.host}:{self.port}) WebSocket server has been closed.")
-            except asyncio.TimeoutError:
-                logger.warning(f"OverheadStreamer ({self.host}:{self.port}) timeout waiting for WebSocket server to close.")
-        
-
-    def stop(self):
-        """Stop the streamer (called by ForkliftServer)"""
-        if not self.running and not (self.loop and self.loop.is_running()):
-            logger.info(f"OverheadStreamer: stop() called, but server or loop not active.")
+        """Starts the OverheadStreamer in a new thread with its own asyncio event loop.
+        Initializes and runs the WebSocket server.
+        """
+        if self.server_thread and self.server_thread.is_alive():
+            logger.warning("OverheadStreamer: Start called, but server thread is already running.")
             return
 
-        logger.info(f"OverheadStreamer: stop() called. Signaling stop event.")
-        self.running = False
+        logger.info("OverheadStreamer: Starting server thread and asyncio event loop...")
+        self.async_loop = asyncio.new_event_loop()
         
-        if self.loop and self._stop_event and not self._stop_event.is_set():
-            self.loop.call_soon_threadsafe(self._stop_event.set)
+        def loop_runner():
+            asyncio.set_event_loop(self.async_loop)
+            try:
+                self.async_loop.run_until_complete(self._run_server_main_task())
+            except KeyboardInterrupt:
+                logger.info("OverheadStreamer: KeyboardInterrupt in server loop.")
+            except Exception as e:
+                logger.error(f"OverheadStreamer: Exception in server_thread's run_loop: {e}", exc_info=True)
+            finally:
+                logger.info("OverheadStreamer: Asyncio loop in server_thread ended.")
+                if self.async_loop.is_running():
+                    self.async_loop.call_soon_threadsafe(self.async_loop.stop)
+        
+        self.server_thread = threading.Thread(target=loop_runner, daemon=True, name="OverheadStreamerThread")
+        self.server_thread.start()
+        logger.info("OverheadStreamer: Server thread started.")
+
+    def stop(self):
+        """Signals the OverheadStreamer to stop its operations gracefully."""
+        logger.info("OverheadStreamer: Stop requested.")
+        if not self._running_WebSocket_server and not (self.server_thread and self.server_thread.is_alive()):
+            logger.info("OverheadStreamer: Stop called but streamer not considered active.")
+            self.cleanup()
+            return
+
+        self._running_WebSocket_server = False
+
+        if self.async_loop and self._stop_event and not self._stop_event.is_set():
+            logger.info("OverheadStreamer: Setting stop_event for the server's asyncio loop.")
+            self.async_loop.call_soon_threadsafe(self._stop_event.set)
         else:
-            logger.info("OverheadStreamer: Loop or _stop_event not available or already set.")
+            logger.warning("OverheadStreamer: Cannot signal stop_event (loop or event not available/already set).")
+        
+        if self.server_thread and self.server_thread.is_alive():
+            logger.info("OverheadStreamer: Waiting for server thread to join...")
+            self.server_thread.join(timeout=7.0)
+            if self.server_thread.is_alive():
+                logger.warning("OverheadStreamer: Server thread did not join in time. It might be stuck.")
+            else:
+                logger.info("OverheadStreamer: Server thread joined.")
+        self.server_thread = None
+        
+        self.cleanup()
+        logger.info("OverheadStreamer: Stop sequence complete.")
 
     def cleanup(self):
-        """Clean up resources (called by ForkliftServer)"""
-        logger.info(f"OverheadStreamer: Cleaning up...")
-        # Loop cleanup is handled in start() finally or stop() indirectly
-        if self.loop and not self.loop.is_closed():
-             logger.warning("OverheadStreamer: Event loop was not closed; attempting close in cleanup.")
-             if self.loop.is_running():
-                 self.loop.call_soon_threadsafe(self.loop.stop)
-                 # Give it a moment to process the stop
-                 # This is tricky from a different thread; direct closing might be abrupt
-                 # Consider joining the thread that runs self.loop if possible from ForkliftServer
-             time.sleep(0.2) # Short delay
-             if not self.loop.is_closed(): # Check again
-                self.loop.close()
-             logger.info("OverheadStreamer: Event loop closed in cleanup.")
-        self.loop = None
-        logger.info(f"OverheadStreamer: Cleanup complete.") 
+        """Cleans up any held resources. Primarily ensures the asyncio loop is closed if still open.
+        This is usually called as part of the stop() sequence.
+        """
+        logger.info(f"OverheadStreamer: Cleanup initiated.")
+        self._running_WebSocket_server = False
+
+        self.clients.clear()
+
+        if self.async_loop:
+            if self.async_loop.is_running():
+                logger.info("OverheadStreamer cleanup: Asyncio loop is still running. Requesting stop.")
+                self.async_loop.call_soon_threadsafe(self.async_loop.stop)
+            
+            if not self.async_loop.is_closed():
+                logger.info("OverheadStreamer cleanup: Closing asyncio loop.")
+            else:
+                logger.info("OverheadStreamer cleanup: Asyncio loop was already closed.")
+        self.async_loop = None
+        logger.info(f"OverheadStreamer: Cleanup finished.") 
