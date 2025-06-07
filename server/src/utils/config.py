@@ -219,5 +219,5 @@ OVERHEAD_VIEW_STATIC_LOCATIONS = {
 }
 # --- End of New Overhead Camera Configuration ---
 
-# Make sure this is the last line if utility functions or further setup is needed below.
+# Make sure this is the last line if utility functions or further setup is needed below. 
 # No further executable code should follow this line unless it's part of configuration loading. 

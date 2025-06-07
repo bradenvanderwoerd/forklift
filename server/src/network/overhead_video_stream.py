@@ -81,26 +81,26 @@ class OverheadStreamer:
                     if not websocket.open:
                         logger.info(f"OverheadStreamer: Client {remote_addr} websocket closed during queue timeout.")
                         break
-                    continue
+                        continue
                 
                 if frame_to_send is None:
                     logger.info(f"OverheadStreamer: Received None from queue for client {remote_addr}. Ending handler.")
                     break
 
-                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality]
-                result, encoded_jpeg = cv2.imencode('.jpg', frame_to_send, encode_param)
-                
-                if not result:
+                    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality]
+                    result, encoded_jpeg = cv2.imencode('.jpg', frame_to_send, encode_param)
+                    
+                    if not result:
                     logger.error("OverheadStreamer: Failed to encode frame to JPEG. Skipping send.")
                     client_queue.task_done()
-                    continue
-                
-                await websocket.send(encoded_jpeg.tobytes())
-                client_queue.task_done()
+                        continue
+                    
+                    await websocket.send(encoded_jpeg.tobytes())
+                    client_queue.task_done()
 
-        except ConnectionClosed:
+                except ConnectionClosed:
             logger.info(f"OverheadStreamer: Client {remote_addr} connection closed gracefully.")
-        except Exception as e:
+                except Exception as e:
             logger.error(f"OverheadStreamer: Error in client handler for {remote_addr}: {e}", exc_info=True)
         finally:
             logger.info(f"OverheadStreamer: Client {remote_addr} disconnecting. Removing its queue.")
@@ -174,7 +174,7 @@ class OverheadStreamer:
             return
 
         self._running_WebSocket_server = False
-
+        
         if self.async_loop and self._stop_event and not self._stop_event.is_set():
             logger.info("OverheadStreamer: Setting stop_event for the server's asyncio loop.")
             self.async_loop.call_soon_threadsafe(self._stop_event.set)

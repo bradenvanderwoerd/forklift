@@ -52,12 +52,12 @@ class MotorController:
         # Obsolete attributes from previous PID logic, removed as `move` is primary.
         # self.current_speed = 0 
         # self.pid_controller = PIDController() 
-
+        
     def _setup_pins(self):
         """Sets up all GPIO pins used by the motor controller as outputs."""
         pins = [
             self.MOTOR1_PIN1, self.MOTOR1_PIN2, 
-            self.MOTOR2_PIN1, self.MOTOR2_PIN2,
+                self.MOTOR2_PIN1, self.MOTOR2_PIN2,
             self.MOTOR1_PWM, self.MOTOR2_PWM
         ]
         
@@ -124,14 +124,14 @@ class MotorController:
 
         self._set_motor_speed(self.pwm1, self.MOTOR1_PIN1, self.MOTOR1_PIN2, left_speed)
         self._set_motor_speed(self.pwm2, self.MOTOR2_PIN1, self.MOTOR2_PIN2, right_speed)
-        
+    
     def set_speed(self, speed: float):
         """(DEPRECATED) Sets the same speed for both motors for straight movement.
         
         This method is deprecated. Use `move(forward_component=speed, turn_component=0)` 
         for straight forward movement, or `move(forward_component=-speed, turn_component=0)`
         for straight backward movement.
-
+        
         Args:
             speed: Target speed for both motors (-100 to 100). Positive for forward,
                    negative for backward (though direct application here assumes positive for PWM).
@@ -141,13 +141,13 @@ class MotorController:
         clamped_speed = int(max(-100, min(100, speed)))
         self._set_motor_speed(self.pwm1, self.MOTOR1_PIN1, self.MOTOR1_PIN2, clamped_speed)
         self._set_motor_speed(self.pwm2, self.MOTOR2_PIN1, self.MOTOR2_PIN2, clamped_speed)
-
+    
     def _apply_speed(self, speed: float):
         """(DEPRECATED) Apply a given speed to both motors.
         
         This method is deprecated. Functionality is covered by `_set_motor_speed` 
         and the logic within `move` or the simplified `set_speed`.
-
+        
         Args:
             speed: Speed value for both motors.
         """
@@ -155,7 +155,7 @@ class MotorController:
         clamped_speed = int(max(-100, min(100, speed)))
         self._set_motor_speed(self.pwm1, self.MOTOR1_PIN1, self.MOTOR1_PIN2, clamped_speed)
         self._set_motor_speed(self.pwm2, self.MOTOR2_PIN1, self.MOTOR2_PIN2, clamped_speed)
-
+    
     def stop(self):
         """Stops all motor activity immediately.
         

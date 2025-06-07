@@ -337,7 +337,7 @@ class MainWindow(QMainWindow):
         for pin, display_widget in self.servo_key_displays.items():
             display_widget.set_active(pin == self.selected_servo_pin)
         logger.debug(f"Servo selection display updated. Selected: Pin {self.selected_servo_pin}")
-
+        
     def keyPressEvent(self, event: QKeyEvent):
         """Handles key press events for robot control and UI interaction."""
         if event.isAutoRepeat(): # Ignore auto-repeated key presses for continuous actions
@@ -563,7 +563,7 @@ class MainWindow(QMainWindow):
         # Ensure min_actual_speed is less than max_actual_speed to avoid division by zero or negative range
         if min_actual_speed >= max_actual_speed:
             min_actual_speed = 75  # Fallback values
-            max_actual_speed = 100
+        max_actual_speed = 100
             logger.warning(f"MainWindow: Invalid speed range in config (min_drive_speed >= max_drive_speed). Using default {min_actual_speed}-{max_actual_speed}.")
 
         actual_speed_range = max_actual_speed - min_actual_speed
@@ -577,11 +577,11 @@ class MainWindow(QMainWindow):
         """Displays a single video frame (NumPy array) on a QLabel, scaling it."""
         if frame is not None and frame.size > 0: # Check if frame is not None and not empty
             try:
-                height, width, channel = frame.shape
+            height, width, channel = frame.shape
                 bytes_per_line = channel * width # channel is usually 3 for RGB
                 # Create QImage from the NumPy array (assuming RGB format from network clients)
-                q_image = QImage(frame.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
-                pixmap = QPixmap.fromImage(q_image)
+            q_image = QImage(frame.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
+            pixmap = QPixmap.fromImage(q_image)
                 
                 # Scale pixmap to fit the label while keeping aspect ratio
                 scaled_pixmap = pixmap.scaled(video_label_widget.size(), 

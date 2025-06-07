@@ -56,12 +56,12 @@ def check_port_availability(port: int, host: str = config.HOST) -> bool:
         True if the port is available, False otherwise.
     """
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind((host, port))
             return True
-    except socket.error as e:
+        except socket.error as e:
         logger.error(f"ForkliftServer: Port check failed for {host}:{port} - {e}")
-        return False
+            return False
 
 class ForkliftServer:
     """Main server application for the Forklift robot.
@@ -116,7 +116,7 @@ class ForkliftServer:
         
         self.motor_controller = MotorController()
         self.navigation_controller = NavigationController(self.motor_controller)
-
+        
         self.servo_controllers: Dict[int, ServoController] = {}
         self._initialize_servo_controllers()
         self.primary_fork_servo: Optional[ServoController] = self.servo_controllers.get(config.FORK_SERVO_A_PIN)
@@ -301,7 +301,7 @@ class ForkliftServer:
         self.motor_controller.stop()
         
         logger.info("ForkliftServer: Motors stopped due to emergency stop. Autonav cancelled if active.")
-
+    
     def _handle_toggle_autonav_command(self, data: Dict[str, Any]):
         """Handles 'toggle_autonav' command to start or stop the autonomous navigation sequence.
         Payload expected: {"target": "pickup" or "dropoff"} when starting.
@@ -337,8 +337,8 @@ class ForkliftServer:
             else:
                 logger.error(f"ForkliftServer: Unknown autonav target '{target_location_name}'. Valid: 'pickup', 'dropoff'.")
                 self.autonav_active = False
-                return
-
+            return
+        
             if target_pose_for_nav:
                 self.navigation_controller.set_target(target_pose_for_nav)
                 logger.info(f"ForkliftServer: Autonomous navigation started towards {self.autonav_current_stage} ({target_location_name}). Target pose: {target_pose_for_nav}")
@@ -394,7 +394,7 @@ class ForkliftServer:
                  self._save_overhead_target_poses()
                  logger.info(f"ForkliftServer: Cleared overhead target for '{target_type}'.")
             return
-
+        
         try:
             x_val, y_val, theta_val_deg = float(x_px), float(y_px), float(theta_deg)
             theta_val_rad = math.radians(theta_val_deg)
@@ -420,7 +420,7 @@ class ForkliftServer:
                     setattr(config, key, new_val)
                     logger.info(f"ForkliftServer: Config value '{key}' updated from {current_val} to {new_val}.")
                     updated_any = True
-                except Exception as e:
+        except Exception as e:
                     logger.error(f"ForkliftServer: Failed to update config value '{key}' to '{value}': {e}")
             else:
                 logger.warning(f"ForkliftServer: Config key '{key}' not found in config module.")
@@ -446,7 +446,7 @@ class ForkliftServer:
              self.cleanup()
         else:
             logger.info("ForkliftServer: Cleanup already in progress or completed.")
-
+    
     def start(self):
         """Starts all server components and the main processing loop."""
         logger.info("ForkliftServer: Starting all services...")
@@ -485,7 +485,7 @@ class ForkliftServer:
                         except Exception as e:
                             logger.error(f"ForkliftServer: Error undistorting overhead frame: {e}")
                             processed_overhead_frame = raw_overhead_frame
-                    else:
+                else:
                         processed_overhead_frame = raw_overhead_frame
 
                     localization_result = self.overhead_localizer.get_robot_pose_from_frame(processed_overhead_frame)
@@ -516,7 +516,7 @@ class ForkliftServer:
                         logger.info(f"Autonav: NAV_TO_PICKUP. Current pose: X:{current_robot_pose_for_nav[0]:.0f}, Y:{current_robot_pose_for_nav[1]:.0f}, Theta:{math.degrees(current_robot_pose_for_nav[2]):.1f}°")
                         if self.navigation_controller.current_target_pixel_pose != self.overhead_target_poses_pixels["pickup"]:
                             pickup_target = self.overhead_target_poses_pixels["pickup"]
-                            if pickup_target:
+                        if pickup_target:
                                 self.navigation_controller.set_target(pickup_target)
                                 logger.info(f"Autonav: Re-set NAV_TO_PICKUP target: {pickup_target}")
                             else:
@@ -580,7 +580,7 @@ class ForkliftServer:
                             is_target_reached_nav = self.navigation_controller.navigate(current_robot_pose_for_nav)
                             if is_target_reached_nav:
                                 logger.info("Autonav: Reached DROPOFF location.")
-                                self.motor_controller.stop()
+                            self.motor_controller.stop()
                                 self.autonav_current_stage = AUTONAV_STAGE_LOWER_FORKS_FOR_DROPOFF
                                 self.autonav_stage_entry_time = time.time()
 
@@ -616,7 +616,7 @@ class ForkliftServer:
                         self.autonav_active = False
                         self.autonav_current_stage = AUTONAV_STAGE_IDLE
                         self.motor_controller.stop()
-                        self.navigation_controller.clear_target()
+                            self.navigation_controller.clear_target()
                         if self.primary_fork_servo:
                              self.primary_fork_servo.set_position(config.FORK_A_INITIAL_ANGLE)
 
@@ -626,7 +626,7 @@ class ForkliftServer:
                     time.sleep(sleep_time)
                 else:
                     logger.debug(f"ForkliftServer: Main loop iteration took {loop_duration*1000:.2f}ms (longer than target max FPS period). Consider optimizing.")
-
+                
         except KeyboardInterrupt:
             logger.info("ForkliftServer: KeyboardInterrupt caught in main start() loop. Initiating cleanup...")
         except Exception as e:
@@ -647,7 +647,7 @@ class ForkliftServer:
         with self._cleanup_in_progress_lock:
             if self._cleanup_initiated:
                 logger.info("ForkliftServer: Cleanup already initiated or completed. Skipping.")
-                return
+            return
             self._cleanup_initiated = True
         
         logger.info("ForkliftServer: Starting cleanup sequence...")
@@ -696,7 +696,7 @@ class ForkliftServer:
         try:
             GPIO.cleanup()
             logger.info("ForkliftServer: GPIO cleanup successful.")
-        except Exception as e:
+            except Exception as e:
             logger.error(f"ForkliftServer: Error during GPIO.cleanup(): {e}")
 
         self.cleanup_complete_event.set()
@@ -713,7 +713,7 @@ class ForkliftServer:
         try:
             if os.path.exists(file_path):
                 with open(file_path, 'r') as f:
-                    loaded_poses = json.load(f)
+                loaded_poses = json.load(f)
                     pickup_pose = loaded_poses.get("pickup")
                     if isinstance(pickup_pose, list) and len(pickup_pose) == 3:
                         self.overhead_target_poses_pixels["pickup"] = tuple(pickup_pose)
@@ -722,7 +722,7 @@ class ForkliftServer:
                     if isinstance(dropoff_pose, list) and len(dropoff_pose) == 3:
                          self.overhead_target_poses_pixels["dropoff"] = tuple(dropoff_pose)
                     logger.info(f"ForkliftServer: Loaded overhead target poses from {file_path}. Pickup: {self.overhead_target_poses_pixels['pickup']}, Dropoff: {self.overhead_target_poses_pixels['dropoff']}")
-            else:
+                else:
                 logger.info(f"ForkliftServer: Overhead targets file ({file_path}) not found. Targets will be None.")
         except Exception as e:
             logger.error(f"ForkliftServer: Error loading overhead target poses from {file_path}: {e}", exc_info=True)

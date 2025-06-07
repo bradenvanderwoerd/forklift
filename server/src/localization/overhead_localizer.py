@@ -155,7 +155,7 @@ class OverheadLocalizer:
         # Draw the original ArUco marker center (small blue dot)
         cv2.circle(frame, (int(pose_estimate.marker_x_px), int(pose_estimate.marker_y_px)), 
                    radius=3, color=(255, 100, 100), thickness=-1) # Light Blue dot for marker center
-
+        
         # Draw the calculated robot rotation center (larger magenta circle)
         cv2.circle(frame, (int(pose_estimate.r_x_px), int(pose_estimate.r_y_px)), 
                    radius=5, color=(255, 0, 255), thickness=-1) # Magenta circle for rotation center

@@ -214,9 +214,9 @@ class CommandServer:
                 self.async_loop.run_until_complete(self._run_websocket_server_task())
             except KeyboardInterrupt:
                 logger.info("CommandServer: KeyboardInterrupt in server loop.")
-            except Exception as e:
+        except Exception as e:
                 logger.error(f"CommandServer: Exception in server_thread's run_loop: {e}", exc_info=True)
-            finally:
+        finally:
                 logger.info("CommandServer: Asyncio loop in server_thread ended.")
                 if self.async_loop.is_running():
                     self.async_loop.call_soon_threadsafe(self.async_loop.stop) 

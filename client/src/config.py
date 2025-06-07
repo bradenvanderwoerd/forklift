@@ -16,7 +16,7 @@ env_path = os.path.join(
 )
 logger.info(f"Attempting to load environment variables from: {env_path}")
 if os.path.exists(env_path):
-    load_dotenv(env_path)
+load_dotenv(env_path)
     logger.info(f"Successfully loaded environment variables from {env_path}")
 else:
     logger.warning(f".env file not found at {env_path}. Using default configurations.")

@@ -152,20 +152,20 @@ forklift/
     ```
 
 3.  **Navigate to Server Directory:**
-    ```bash
-    cd server
+   ```bash
+   cd server
     ```
 
 4.  **Create and Activate Python Virtual Environment:**
     ```bash
     python3 -m venv venv
-    source venv/bin/activate
+   source venv/bin/activate
     ```
 
 5.  **Install Python Dependencies:**
     ```bash
-    pip install -r requirements.txt
-    ```
+   pip install -r requirements.txt
+   ```
     The `requirements.txt` should include: `RPi.GPIO`, `opencv-python`, `numpy`, `python-dotenv`, `websockets`, `Pillow`, `v4l2-python3`, `piexif`, and `picamera2` (if not fully covered by system install for venv).
 
 6.  **Symbolic Links (If Necessary for Picamera2/RPi.GPIO in venv):**
@@ -202,7 +202,7 @@ forklift/
 
 9.  **Run the Server:**
     From the `server` directory (with the virtual environment activated):
-    ```bash
+   ```bash
     python src/main.py
     ```
     Observe the logs for any errors during initialization or operation.
@@ -212,25 +212,25 @@ forklift/
 1.  **Navigate to Client Directory:**
     From the project root:
     ```bash
-    cd client
-    ```
+   cd client
+   ```
 
 2.  **Create and Activate Python Virtual Environment:**
-    ```bash
+   ```bash
     python3 -m venv venv
     source venv/bin/activate
     ```
 
 3.  **Install Python Dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+   ```bash
+   pip install -r requirements.txt
+   ```
     The `client/requirements.txt` should include: `PyQt6`, `opencv-python`, `numpy`, `websockets`, `python-dotenv`, `colorama`.
 
 4.  **Run the Client:**
     *   Ensure the `SERVER_HOST` variable in your root `.env` file correctly points to the IP address of your Raspberry Pi on the local network. The client application (`client/src/config.py`) reads this.
     *   From the `client` directory (with virtual environment activated):
-    ```bash
+   ```bash
     python src/main.py
     ```
 

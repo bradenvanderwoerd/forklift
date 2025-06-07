@@ -68,9 +68,9 @@ class RobotClient:
         thread (Optional[threading.Thread]): The dedicated thread running the asyncio loop.
         _stop_event (Optional[asyncio.Event]): Asyncio event to signal the client loop to stop.
     """
-    def __init__(self, host: str = SERVER_HOST,
-                 command_port: int = COMMAND_PORT,
-                 onboard_video_port: int = VIDEO_PORT,
+    def __init__(self, host: str = SERVER_HOST, 
+                 command_port: int = COMMAND_PORT, 
+                 onboard_video_port: int = VIDEO_PORT, 
                  overhead_video_port: int = OVERHEAD_VIDEO_PORT):
         """
         Initializes the RobotClient.
@@ -85,11 +85,11 @@ class RobotClient:
         self.command_port = command_port
         self.onboard_video_port = onboard_video_port
         self.overhead_video_port = overhead_video_port
-
+        
         self.command_ws: Optional[websockets.WebSocketClientProtocol] = None
         self.onboard_video_ws: Optional[websockets.WebSocketClientProtocol] = None
         self.overhead_video_ws: Optional[websockets.WebSocketClientProtocol] = None
-
+        
         self.is_connected = False # Overall connection status
         self.command_connected = False
         self.onboard_video_connected = False
@@ -99,20 +99,20 @@ class RobotClient:
         # maxsize=1 ensures the UI gets the latest frame, dropping older ones if not consumed.
         self.onboard_video_queue: queue.Queue[Optional[np.ndarray]] = queue.Queue(maxsize=1)
         self.overhead_video_queue: queue.Queue[Optional[np.ndarray]] = queue.Queue(maxsize=1)
-
+        
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.thread: Optional[threading.Thread] = None
         self._stop_event: Optional[asyncio.Event] = None # For signaling the async loop to stop
-
+        
         # Asyncio tasks for video stream receivers
         self.onboard_video_receive_task: Optional[asyncio.Task] = None
         self.overhead_video_receive_task: Optional[asyncio.Task] = None
-
+        
         logger.info(
             f"RobotClient initialized. Target Server: ws://{self.host}:"
             f"Cmd({self.command_port}), OnboardVid({self.onboard_video_port}), OverheadVid({self.overhead_video_port})"
         )
-
+        
     def connect(self):
         """
         Starts the client's network operations in a dedicated thread.
@@ -132,7 +132,7 @@ class RobotClient:
         self.thread = threading.Thread(target=self._run_client_event_loop, name="RobotClientAsyncThread")
         self.thread.daemon = True # Allow main program to exit even if this thread is running.
         self.thread.start()
-
+            
     def disconnect(self):
         """
         Signals the client to disconnect all WebSockets and stop its network thread.
@@ -144,14 +144,14 @@ class RobotClient:
             # Perform cleanup just in case, though ideally, resources are tied to the loop/thread.
             self._cleanup_resources_immediate()
             return
-
+            
         # Signal the asyncio loop to stop its operations.
         if self.loop and self._stop_event and not self._stop_event.is_set():
             logger.info("RobotClient: Signaling asyncio stop event.")
             self.loop.call_soon_threadsafe(self._stop_event.set)
         else:
             logger.warning("RobotClient: Cannot signal stop event: loop or event not initialized or already set.")
-
+        
         # Wait for the network thread to finish.
         if self.thread:
             logger.info("RobotClient: Waiting for client thread to join...")
@@ -189,7 +189,7 @@ class RobotClient:
         while not self.overhead_video_queue.empty(): self.overhead_video_queue.get_nowait()
         logger.debug("RobotClient: Immediate resource cleanup performed.")
 
-
+            
     def send_command(self, command_type: str, data: Optional[Dict[str, Any]] = None):
         """
         Sends a command to the robot server via the command WebSocket.
@@ -235,7 +235,7 @@ class RobotClient:
                 logger.error(f"RobotClient: Error sending command async: {e}")
         else:
             logger.warning("RobotClient: Command WebSocket not available or closed when _send_command_async was called.")
-
+            
     def get_onboard_video_frame(self) -> Optional[np.ndarray]:
         """
         Retrieves the latest onboard video frame from its queue. Non-blocking.
@@ -259,7 +259,7 @@ class RobotClient:
             return self.overhead_video_queue.get_nowait()
         except queue.Empty:
             return None
-
+            
     async def _connect_individual_ws(self, url: str, description: str) -> Optional[websockets.WebSocketClientProtocol]:
         """Helper to connect to an individual WebSocket with timeout and error handling."""
         logger.info(f"RobotClient: Attempting to connect to {description} at {url}...")
@@ -302,7 +302,7 @@ class RobotClient:
             onboard_vid_ws_url = f"ws://{self.host}:{self.onboard_video_port}"
             self.onboard_video_ws = await self._connect_individual_ws(onboard_vid_ws_url, "Onboard Video Server")
             if self.onboard_video_ws and self.onboard_video_ws.open:
-                self.onboard_video_connected = True
+            self.onboard_video_connected = True
                 if self.onboard_video_receive_task and not self.onboard_video_receive_task.done():
                     self.onboard_video_receive_task.cancel() # Cancel old task if any
                 self.onboard_video_receive_task = asyncio.create_task(
@@ -318,7 +318,7 @@ class RobotClient:
             overhead_vid_ws_url = f"ws://{self.host}:{self.overhead_video_port}"
             self.overhead_video_ws = await self._connect_individual_ws(overhead_vid_ws_url, "Overhead Video Server")
             if self.overhead_video_ws and self.overhead_video_ws.open:
-                self.overhead_video_connected = True
+            self.overhead_video_connected = True
                 if self.overhead_video_receive_task and not self.overhead_video_receive_task.done():
                     self.overhead_video_receive_task.cancel() # Cancel old task if any
                 self.overhead_video_receive_task = asyncio.create_task(
@@ -331,7 +331,7 @@ class RobotClient:
         # Update overall connection status
         # For this client, command and onboard video are considered essential. Overhead is optional.
         self.is_connected = self.command_connected and self.onboard_video_connected
-        if self.is_connected:
+            if self.is_connected:
             status_msg = "RobotClient: Connected to Command and Onboard Video."
             if self.overhead_video_connected:
                 status_msg += " Overhead Video also connected."
@@ -344,7 +344,7 @@ class RobotClient:
                 f"Command: {self.command_connected}, OnboardVideo: {self.onboard_video_connected}, "
                 f"OverheadVideo: {self.overhead_video_connected}."
             )
-
+            
     async def _shutdown_all_client_resources(self):
         """
         Gracefully closes all WebSocket connections and cancels running asyncio tasks.
@@ -361,9 +361,9 @@ class RobotClient:
 
         if tasks_to_cancel:
             logger.debug(f"RobotClient: Cancelling {len(tasks_to_cancel)} video tasks...")
-            for task in tasks_to_cancel:
+        for task in tasks_to_cancel:
                 task_name = task.get_name() if hasattr(task, 'get_name') else 'UnknownVideoTask'
-                task.cancel()
+            task.cancel()
                 try:
                     await task # Allow task to process cancellation
                 except asyncio.CancelledError:
@@ -409,7 +409,7 @@ class RobotClient:
         
         self.is_connected = False # Overall connection status
         logger.info("RobotClient: All async client resources have been processed for shutdown.")
-
+            
     async def _receive_video_stream(self, ws: websockets.WebSocketClientProtocol,
                                     video_frame_queue: queue.Queue, stream_name: str):
         """
@@ -438,7 +438,7 @@ class RobotClient:
                     if frame is not None:
                         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) # Convert BGR (OpenCV default) to RGB
                         # Put the frame into the queue (non-blocking, drops if full)
-                        try:
+                        try: 
                             if video_frame_queue.full(): # If queue is full, discard the oldest frame
                                 video_frame_queue.get_nowait()
                             video_frame_queue.put_nowait(frame_rgb)
@@ -478,7 +478,7 @@ class RobotClient:
                (stream_name == "Command" and not self.command_connected): # Though command isn't handled here
                 self.is_connected = self.command_connected and self.onboard_video_connected
 
-
+                
     def _run_client_event_loop(self):
         """
         Target method for the client's dedicated network thread.
@@ -508,7 +508,7 @@ class RobotClient:
                     logger.error("RobotClient: Timeout waiting for _shutdown_all_client_resources in _run_client_event_loop.")
                 except Exception as e_shutdown:
                     logger.error(f"RobotClient: Exception during _shutdown_all_client_resources in _run_client_event_loop: {e_shutdown}")
-
+            
             # Close the asyncio loop
             if self.loop and not self.loop.is_closed():
                 # Cancel all remaining tasks in the loop
@@ -536,7 +536,7 @@ class RobotClient:
         max_retry_delay_seconds = 60
 
         while not (self._stop_event and self._stop_event.is_set()):
-            try:
+                try:
                 # If not connected, attempt to connect all WebSockets
                 if not self.is_connected: # is_connected reflects essential connections
                     await self._connect_all_websockets() # This updates self.is_connected
@@ -551,28 +551,28 @@ class RobotClient:
                         retry_delay_seconds = 5 # Reset retry delay on successful connection
 
                 # If connected, monitor health and wait for stop signal
-                if self.is_connected:
-                    try:
+            if self.is_connected:
+                try:
                         # Wait for the stop event with a timeout, allowing periodic checks
-                        await asyncio.wait_for(self._stop_event.wait(), timeout=1.0)
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=1.0) 
                         # If wait() returns, it means _stop_event was set.
                         logger.info("RobotClient: Stop event detected in main management loop.")
                         break # Exit the while loop
-                    except asyncio.TimeoutError:
+                except asyncio.TimeoutError:
                         # Timeout occurred, _stop_event not set. Check WebSocket health.
                         any_essential_ws_closed = False
                         if self.command_ws and self.command_ws.state != State.OPEN:
                             logger.warning("RobotClient: Command WebSocket found not OPEN. State: {self.command_ws.state}")
-                            self.command_connected = False
+                        self.command_connected = False
                             any_essential_ws_closed = True
                         if self.onboard_video_ws and self.onboard_video_ws.state != State.OPEN:
                             logger.warning("RobotClient: Onboard Video WebSocket found not OPEN. State: {self.onboard_video_ws.state}")
-                            self.onboard_video_connected = False
+                        self.onboard_video_connected = False
                             any_essential_ws_closed = True
                         # Non-essential, but log if it's closed
                         if self.overhead_video_ws and self.overhead_video_ws.state != State.OPEN:
                              logger.debug("RobotClient: Overhead Video WebSocket found not OPEN. State: {self.overhead_video_ws.state}")
-                             self.overhead_video_connected = False
+                        self.overhead_video_connected = False
 
 
                         if any_essential_ws_closed:
@@ -584,7 +584,7 @@ class RobotClient:
 
             except asyncio.CancelledError:
                 logger.info("RobotClient: Main management loop task cancelled.")
-                break
+                 break
             except Exception as e:
                 logger.error(f"RobotClient: Unhandled exception in main management loop: {e}. Retrying connection sequence.", exc_info=True)
                 self.is_connected = False # Assume connections are bad
