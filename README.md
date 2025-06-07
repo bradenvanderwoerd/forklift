@@ -39,21 +39,21 @@ The robot was built on a two-wheel drive chassis with front motors and a rear ba
 
 ```mermaid
 graph TD
-    subgraph "Arena System"
+    subgraph arena ["Arena System"]
         WarehouseCam[("Warehouse Camera<br>TCP Server")]
     end
 
-    subgraph "Forklift Robot (Raspberry Pi)"
+    subgraph robot ["Forklift Robot (Raspberry Pi)"]
         CmdServer["Command Server (TCP)"]
         OnboardVideo["Onboard Video Streamer (UDP)"]
         OverheadProxy["Overhead Video Proxy"]
     end
 
-    subgraph "User's Control Station"
+    subgraph station ["User's Control Station"]
         ClientApp["macOS Client GUI<br>(PyQt6)"]
     end
 
-    subgraph OverheadProxy
+    subgraph proxy [Overhead Video Proxy]
         direction TB
         ProxyClient["TCP Client"]
         ProxyServer["UDP Server"]
@@ -67,9 +67,10 @@ graph TD
     WarehouseCam -- "Raw Video Stream" --> ProxyClient
 
     %% Styling
-    style ClientApp fill:#e3f2fd, stroke:#333, stroke-width:2px
-    style ForkliftRobot fill:#fff3e0, stroke:#333, stroke-width:2px
-    style "Arena System" fill:#e8f5e9, stroke:#333, stroke-width:2px
+    style arena fill:#e8f5e9, stroke:#333, stroke-width:2px
+    style robot fill:#fff3e0, stroke:#333, stroke-width:2px
+    style station fill:#e3f2fd, stroke:#333, stroke-width:2px
+    style proxy fill:#fafafa, stroke:#333, stroke-width:1px
 ```
 
 The project's software was developed in Python using the Cursor IDE and its integrated AI agent. This approach significantly accelerated the coding and iteration process.
