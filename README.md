@@ -37,7 +37,40 @@ The robot was built on a two-wheel drive chassis with front motors and a rear ba
 
 ### Software Architecture
 
-_Add a software architecture diagram here! e.g., `![Software Architecture Diagram](architecture-diagram.png)`_
+```mermaid
+graph TD
+    subgraph "Arena System"
+        WarehouseCam[("Warehouse Camera<br>TCP Server")]
+    end
+
+    subgraph "Forklift Robot (Raspberry Pi)"
+        CmdServer["Command Server (TCP)"]
+        OnboardVideo["Onboard Video Streamer (UDP)"]
+        OverheadProxy["Overhead Video Proxy"]
+    end
+
+    subgraph "User's Control Station"
+        ClientApp["macOS Client GUI<br>(PyQt6)"]
+    end
+
+    subgraph OverheadProxy
+        direction TB
+        ProxyClient["TCP Client"]
+        ProxyServer["UDP Server"]
+        ProxyClient -- "Video Frames" --> ProxyServer
+    end
+
+    %% Data Flow
+    ClientApp -- "Control Commands<br>(drive, servo, etc.)" --> CmdServer
+    OnboardVideo -- "Onboard Camera Feed" --> ClientApp
+    ProxyServer -- "Overhead Camera Feed" --> ClientApp
+    WarehouseCam -- "Raw Video Stream" --> ProxyClient
+
+    %% Styling
+    style ClientApp fill:#e3f2fd, stroke:#333, stroke-width:2px
+    style ForkliftRobot fill:#fff3e0, stroke:#333, stroke-width:2px
+    style "Arena System" fill:#e8f5e9, stroke:#333, stroke-width:2px
+```
 
 The project's software was developed in Python using the Cursor IDE and its integrated AI agent. This approach significantly accelerated the coding and iteration process.
 
