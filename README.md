@@ -43,7 +43,7 @@ graph TD
         WarehouseCam[("Warehouse Camera<br>TCP Server")]
     end
 
-    subgraph robot ["Forklift Robot (Raspberry Pi)"]
+    subgraph robot ["Forklift Robot <br>(Raspberry Pi)"]
         CmdServer["Command Server (TCP)"]
         OnboardVideo["Onboard Video Streamer (UDP)"]
         
