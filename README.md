@@ -44,7 +44,7 @@ The project's software was developed in Python using the Cursor IDE and its inte
 *   **Server (Raspberry Pi):**
     *   A central TCP server to receive and process teleoperation commands from the client.
     *   A UDP server to stream video from the robot's onboard camera.
-    *   A client/server pair to receive the overhead arena camera feed (via TCP) and re-stream it (via UDP) to our control application. This centralized all data streams through the robot.
+    *   A client/server pair to receive the overhead arena camera feed (via TCP) and re-stream it (via UDP) to the control application. This centralized all data streams through the robot.
 
 *   **Client (macOS Application):**
     *   A custom GUI built with PyQt6 for user control and video display.
@@ -59,7 +59,7 @@ For detailed setup and installation instructions, please see [INSTALL.md](INSTAL
 
 The project was graded on a series of milestones and live demonstrations. We successfully achieved the Week 1 (one teleoperation delivery) and Week 4 (custom PCB) milestones, securing an initial 30%.
 
-Our teleoperation strategy proved highly effective. After an initial successful run, we refined our approach for a final attempt. In that run, we successfully delivered 16 boxes, earning 85% for the run and achieving the **class high score for teleoperation**. This brought our final project grade to a perfect **100%**.
+Our teleoperation strategy proved highly effective. After an initial successful run, we refined our approach for a final attempt. In that run, we successfully delivered 16 boxes, earning 85% for the run and achieving the **class high score for teleoperation**. This was added to the milestone grade and brought our final project grade to a perfect **100%**.
 
 ## Future Work: Autonomous Mode
 
