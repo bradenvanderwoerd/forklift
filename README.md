@@ -24,7 +24,7 @@ The challenge involved transporting packages from pickup shelves to correspondin
 
 Our strategy was to maximize the number of boxes delivered per trip. We designed a robot with a 2x3 array of forks on the front, allowing it to transport up to six boxes at once. Given the initial arrangement rules, this design allowed for transporting a maximum of four same-coloured boxes per trip.
 
-_Add a picture of the robot here! e.g., `![Photo of the Forklift](robot-photo.jpg)`_
+![Photo of the Forklift](forklift-photo.jpg)
 
 The robot was built on a two-wheel drive chassis with front motors and a rear ball caster, providing smooth and precise motion centered around the fork mechanism.
 
