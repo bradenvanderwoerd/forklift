@@ -46,18 +46,17 @@ graph TD
     subgraph robot ["Forklift Robot (Raspberry Pi)"]
         CmdServer["Command Server (TCP)"]
         OnboardVideo["Onboard Video Streamer (UDP)"]
-        OverheadProxy["Overhead Video Proxy"]
+        
+        subgraph proxy ["Overhead Video Proxy"]
+            direction TB
+            ProxyClient["TCP Client"]
+            ProxyServer["UDP Server"]
+            ProxyClient -- "Video Frames" --> ProxyServer
+        end
     end
 
     subgraph station ["User's Control Station"]
         ClientApp["macOS Client GUI<br>(PyQt6)"]
-    end
-
-    subgraph proxy [Overhead Video Proxy]
-        direction TB
-        ProxyClient["TCP Client"]
-        ProxyServer["UDP Server"]
-        ProxyClient -- "Video Frames" --> ProxyServer
     end
 
     %% Data Flow
@@ -70,7 +69,7 @@ graph TD
     style arena fill:#e8f5e9, stroke:#333, stroke-width:2px
     style robot fill:#fff3e0, stroke:#333, stroke-width:2px
     style station fill:#e3f2fd, stroke:#333, stroke-width:2px
-    style proxy fill:#fafafa, stroke:#333, stroke-width:1px
+    style proxy fill:#fafafa, stroke:#333, stroke-width:1px, stroke-dasharray: 5 5
 ```
 
 The project's software was developed in Python using the Cursor IDE and its integrated AI agent. This approach significantly accelerated the coding and iteration process.
