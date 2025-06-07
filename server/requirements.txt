@@ -1,10 +1,26 @@
+# For a Raspberry Pi environment, some packages are best installed via apt
+# to ensure compatibility with the system's libraries.
+# It is highly recommended to run this command before using pip:
+#
+# sudo apt update
+# sudo apt install -y python3-picamera2 python3-rpi.gpio python3-libcamera python3-numpy python3-opencv
+#
+# The packages listed below are the Python dependencies for this project.
+# You can attempt to install them with 'pip install -r requirements.txt'
+# after running the apt command above.
+
+numpy
+opencv-python
+RPi.GPIO
+picamera2
+websockets
+
 # Hardware control
-RPi.GPIO==0.7.1
+RPi.GPIO
 
 # Camera and image processing
-opencv-python>=4.8.0
-opencv-contrib-python>=4.8.0
-numpy>=1.24.0
+opencv-python
+numpy
 Pillow>=10.0.0
 v4l2-python3>=0.2.0  # Required by picamera2 for video4linux2 support
 pidng>=4.0.9  # Required by picamera2 for DNG format support
@@ -18,10 +34,18 @@ PyQt6-Qt6>=6.4.0  # Qt6 bindings
 PyQt6-sip>=13.4.0  # Required by PyQt6
 
 # Network and async
-websockets>=12.0
 python-dotenv>=1.0.0
 
 # System packages (install via apt)
 # These packages must be installed via apt as they require system-level access:
 # sudo apt update
-# sudo apt install -y python3-picamera2 python3-rpi.gpio python3-libcamera python3-prctl python3-numpy python3-pil python3-yaml python3-piexif python3-kms++ python3-pyqt6 python3-opencv 
+# sudo apt install -y python3-picamera2 python3-rpi.gpio python3-libcamera python3-prctl python3-numpy python3-pil python3-yaml python3-piexif python3-kms++ python3-pyqt6 python3-opencv
+
+# New package
+picamera2 
+
+# These packages are installable via pip
+RPi.GPIO
+numpy
+opencv-python
+picamera2 

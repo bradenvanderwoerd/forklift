@@ -24,6 +24,8 @@ The challenge involved transporting packages from pickup shelves to correspondin
 
 Our strategy was to maximize the number of boxes delivered per trip. We designed a robot with a 2x3 array of forks on the front, allowing it to transport up to six boxes at once. Given the initial arrangement rules, this design allowed for transporting a maximum of four same-coloured boxes per trip.
 
+_Add a picture of the robot here! e.g., `![Photo of the Forklift](robot-photo.jpg)`_
+
 The robot was built on a two-wheel drive chassis with front motors and a rear ball caster, providing smooth and precise motion centered around the fork mechanism.
 
 ### Hardware
@@ -34,6 +36,8 @@ The robot was built on a two-wheel drive chassis with front motors and a rear ba
 *   **Vision:** An onboard camera was strategically mounted to align with a single fork, ensuring that if one box was aligned correctly, the others would naturally seat onto their respective forks.
 
 ### Software Architecture
+
+_Add a software architecture diagram here! e.g., `![Software Architecture Diagram](architecture-diagram.png)`_
 
 The project's software was developed in Python using the Cursor IDE and its integrated AI agent. This approach significantly accelerated the coding and iteration process.
 
@@ -46,6 +50,10 @@ The project's software was developed in Python using the Cursor IDE and its inte
     *   A custom GUI built with PyQt6 for user control and video display.
     *   Connects to all three data streams from the Raspberry Pi server.
     *   Features UI elements for driving, operating the forks, and viewing both camera feeds simultaneously.
+
+## Getting Started
+
+For detailed setup and installation instructions, please see [INSTALL.md](INSTALL.md).
 
 ## Final Result & Grading
 
