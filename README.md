@@ -94,7 +94,7 @@ The project was graded on a series of milestones and live demonstrations. We suc
 
 Our teleoperation strategy proved highly effective. After an initial successful run, we refined our approach for a final attempt. In that run, we successfully delivered 16 boxes, earning 85% for the run and achieving the **class high score for teleoperation**. This brought our final project grade to a perfect **100%**.
 
-**[Watch a video of our record-breaking 16-box run on YouTube.](https://youtu.be/your-video-id)**
+**[Watch a video of our record-breaking 16-box run on YouTube.](https://www.youtube.com/watch?v=jsh_YJu2NG4)**
 
 ## Future Work: Autonomous Mode
 
