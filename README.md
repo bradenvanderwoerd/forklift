@@ -92,7 +92,9 @@ For detailed setup and installation instructions, please see [INSTALL.md](INSTAL
 
 The project was graded on a series of milestones and live demonstrations. We successfully achieved the Week 1 (one teleoperation delivery) and Week 4 (custom PCB) milestones, securing an initial 30%.
 
-Our teleoperation strategy proved highly effective. After an initial successful run, we refined our approach for a final attempt. In that run, we successfully delivered 16 boxes, earning 85% for the run and achieving the **class high score for teleoperation**. This was added to the milestone grade and brought our final project grade to a perfect **100%**.
+Our teleoperation strategy proved highly effective. After an initial successful run, we refined our approach for a final attempt. In that run, we successfully delivered 16 boxes, earning 85% for the run and achieving the **class high score for teleoperation**. This brought our final project grade to a perfect **100%**.
+
+**[Watch a video of our record-breaking 16-box run on YouTube.](https://youtu.be/your-video-id)**
 
 ## Future Work: Autonomous Mode
 
